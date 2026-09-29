@@ -1,66 +1,95 @@
 use crate::shared_mem::Mapping;
 use crate::shared_mem::Result;
 use std::alloc::Layout;
+use std::hint::select_unpredictable;
 use std::sync::atomic::AtomicBool;
 
-const CHUNK_SIZE: usize = 32;
+const CHUNK_SIZE: u32 = 32;
 
 pub trait FixedSize: Sized {
-    const SIZE: usize = size_of::<Self>();
+    const SIZE: u32 = size_of::<Self>() as u32;
 }
 
-struct Pages {
-    page_start: u32,
-    num_of_pages: u32,
+pub struct Pages {
+    pub page_start: u32,
+    pub num_of_pages: u32,
+    pub first_page: u32,
 }
 
-struct BitMap {
-    is_locked: AtomicBool,
-    offset: u32,
-    end: u32,
+pub struct BitMap {
+    pub offset: u32,
+    pub len: u32,
 }
+impl BitMap {
+    pub fn write(&self, mapping: &mut Mapping) -> Result<()> {
+        mapping.reset_ptr();
 
+        for i in self.offset..=self.len {
+            mapping.ptr_seek(i as usize)?;
+            unsafe {
+                mapping.ptr_write(AtomicBool::new(false));
+            }
+        }
+
+        Ok(())
+    }
+}
 struct AllocMetadata {
+    is_locked: AtomicBool,
     len: u32,
+    starting_offset_from_here: u32,
 }
 
 pub struct SharedHeader {
-    mem: Pages,
+    pages: Pages,
     bitmap: BitMap,
 }
 
+impl SharedHeader {
+    pub fn pages(&self) -> &Pages {
+        &self.pages
+    }
+    pub fn bitmap(&self) -> &BitMap {
+        &self.bitmap
+    }
+}
 
 impl SharedHeader {
-    pub fn new(name: &str, requested_size: usize) -> Result<()> {
+    pub fn new(name: &str, requested_size: u32) -> Result<Self> {
         let size = requested_size + SharedHeader::SIZE + requested_size / CHUNK_SIZE * AllocMetadata::SIZE;
 
-        let header = SharedHeader::init(requested_size);
-
-        let mem = Mapping::init_shared_mem(name, size)?;
-
-        let header = mem.write_header(header);
-        
-        Ok(())
+        Ok(SharedHeader::init(requested_size))
     }
 
-    fn init(requested_size: usize) -> SharedHeader {
+    fn init(requested_size: u32) -> SharedHeader {
         let num_of_pages = requested_size.div_ceil(CHUNK_SIZE) as u32;
         let bit_map_bytes = requested_size.div_ceil(8);
         let header_size = SharedHeader::SIZE;
         let bitmap_offset = header_size;
 
-        let page_start = (bitmap_offset + bit_map_bytes).next_multiple_of(CHUNK_SIZE) as u32;
+        let page_start = (bitmap_offset + bit_map_bytes);
 
         let is_locked = AtomicBool::new(false);
 
-        let pages = Pages { num_of_pages, page_start };
+        //create pages
+        let pages = Pages::new(page_start, num_of_pages);
+
         let bit_map = BitMap {
-            is_locked,
             offset: bitmap_offset as u32,
-            end: (bitmap_offset + bit_map_bytes) as u32,
+            len: bit_map_bytes as u32,
         };
 
-        SharedHeader { mem: pages, bitmap: bit_map }
+        SharedHeader { pages, bitmap: bit_map }
+    }
+}
+
+impl Pages {
+    fn new(bit_map_end: u32, num_of_pages: u32) -> Self {
+        Pages {
+            page_start: bit_map_end,
+            num_of_pages,
+            first_page: 0,
+        }
     }
 }
 

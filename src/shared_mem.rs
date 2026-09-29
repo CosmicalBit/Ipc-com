@@ -4,6 +4,7 @@ use std::os::fd::AsRawFd;
 use std::os::raw::c_void;
 use std::ptr::NonNull;
 use std::ptr::{self, slice_from_raw_parts_mut};
+use std::sync::atomic::AtomicBool;
 use std::{ffi::CString, str::FromStr};
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -12,6 +13,7 @@ pub enum Error {
     FdError,
     Mmap,
     Null(NulError),
+    NullPtr,
 }
 
 impl From<NulError> for Error {
@@ -21,16 +23,53 @@ impl From<NulError> for Error {
 }
 
 pub struct Mapping {
-    ptr: *mut u8,
-    size: usize,
+    start: u32,
+    ptr: NonNull<u8>,
+    size: u32,
     fd: i32,
 }
 
 impl Mapping {
-    fn new(mut_ptr: *mut u8, size: usize, fd: i32) -> Self {
-        Mapping { ptr: mut_ptr, size, fd }
+    fn new(mut_ptr: *mut u8, size: u32, fd: i32) -> Result<Self> {
+        Ok(Mapping {
+            start: mut_ptr.addr() as u32,
+            ptr: NonNull::new(mut_ptr).ok_or_else(|| Error::NullPtr)?,
+            size,
+            fd,
+        })
     }
-    pub fn init_shared_mem(name: &str, size: usize) -> Result<Mapping> {
+    pub fn reset_ptr(&mut self) {
+        //the ptr was here how is this a error
+        self.ptr = NonNull::new(self.start as *mut u8).unwrap();
+    }
+
+    pub fn ptr(&self) -> &NonNull<u8> {
+        &self.ptr
+    }
+
+    pub fn size(&self) -> &u32 {
+        &self.size
+    }
+
+    ///seeks a certain ptr position
+    pub fn ptr_seek(&mut self, offset: usize) -> Result<()> {
+        let ptr = NonNull::new(offset as *mut u8).ok_or_else(|| Error::NullPtr)?;
+        self.ptr = ptr;
+
+        Ok(())
+    }
+
+    ///# Safety
+    /// `self.ptr` must be:
+    /// pointed to a valid place
+    /// aligned for `T`
+    /// have size_of::<T>() available
+    pub unsafe fn ptr_write<T>(&mut self, data: T) {
+        let ptr = self.ptr.cast::<T>();
+        unsafe { ptr.write(data) };
+    }
+
+    pub fn init_shared_mem(name: &str, size: u32) -> Result<Mapping> {
         let mem = unsafe {
             let name = CString::from_str(name)?;
 
@@ -46,7 +85,7 @@ impl Mapping {
                 return Err(Error::FdError);
             }
 
-            let ptr = libc::mmap(ptr::null_mut(), size, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, fd, 0);
+            let ptr = libc::mmap(ptr::null_mut(), size as usize, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, fd, 0);
 
             if ptr == libc::MAP_FAILED {
                 return Err(Error::Mmap);
@@ -54,29 +93,27 @@ impl Mapping {
 
             let bytes = ptr.cast::<u8>();
 
-            Mapping::new(bytes, size, fd)
+            Mapping::new(bytes, size, fd)?
         };
 
         Ok(mem)
     }
-    pub fn write_header(&self, header: SharedHeader) -> &SharedHeader {
-        let head_ptr = unsafe { self.ptr.cast::<SharedHeader>() };
+    pub fn write_header(&self, header: SharedHeader) -> &'static mut SharedHeader {
+        let mut head_ptr = self.ptr.cast::<SharedHeader>();
 
         unsafe {
             head_ptr.write(header);
-            &*head_ptr
+            head_ptr.as_mut()
         }
     }
-    pub fn change_data<T,R>(handle: T, f: impl FnOnce(&mut T));
-
-    
 }
 
 impl Drop for Mapping {
     fn drop(&mut self) {
+        self.reset_ptr();
         unsafe {
-            let ptr = self.ptr as *mut c_void;
-            libc::munmap(ptr, self.size);
+            let ptr = self.ptr.as_ptr() as *mut c_void;
+            libc::munmap(ptr, self.size as usize);
             libc::close(self.fd);
         }
     }
