@@ -28,6 +28,7 @@ pub struct Mapping {
     size: u32,
     fd: i32,
 }
+//TODO add a show header funciton
 
 impl Mapping {
     fn new(mut_ptr: *mut u8, size: u32, fd: i32) -> Result<Self> {
@@ -98,7 +99,7 @@ impl Mapping {
 
         Ok(mem)
     }
-    pub fn write_header(&self, header: SharedHeader) -> &'static mut SharedHeader {
+    pub fn write_header(&self, header: SharedHeader) -> & mut SharedHeader {
         let mut head_ptr = self.ptr.cast::<SharedHeader>();
 
         unsafe {
