@@ -1,14 +1,14 @@
-use crate::ipc::{FixedSize, SharedHeader};
+use crate::ipc::SharedHeader;
 use std::ffi::NulError;
-use std::os::fd::AsRawFd;
 use std::os::raw::c_void;
+use std::ptr;
 use std::ptr::NonNull;
-use std::ptr::{self, slice_from_raw_parts_mut};
 use std::sync::atomic::AtomicBool;
 use std::{ffi::CString, str::FromStr};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum Error {
     FdError,
     Mmap,
@@ -23,7 +23,7 @@ impl From<NulError> for Error {
 }
 
 pub struct Mapping {
-    start: u32,
+    start: NonNull<u8>,
     ptr: NonNull<u8>,
     size: u32,
     fd: i32,
@@ -33,31 +33,38 @@ pub struct Mapping {
 impl Mapping {
     fn new(mut_ptr: *mut u8, size: u32, fd: i32) -> Result<Self> {
         Ok(Mapping {
-            start: mut_ptr.addr() as u32,
+            start: NonNull::new(mut_ptr).ok_or_else(|| Error::NullPtr)?,
             ptr: NonNull::new(mut_ptr).ok_or_else(|| Error::NullPtr)?,
             size,
             fd,
         })
     }
+
     pub fn reset_ptr(&mut self) {
-        //the ptr was here how is this a error
-        self.ptr = NonNull::new(self.start as *mut u8).unwrap();
+        self.ptr = NonNull::new(self.start.as_ptr()).unwrap();
     }
 
     pub fn ptr(&self) -> &NonNull<u8> {
         &self.ptr
     }
 
+    pub fn header(&self) -> &SharedHeader {
+        //the ptr was here how is this a error
+        unsafe { self.start.cast::<SharedHeader>().as_ref() }
+    }
+
     pub fn size(&self) -> &u32 {
         &self.size
     }
 
-    ///seeks a certain ptr position
-    pub fn ptr_seek(&mut self, offset: usize) -> Result<()> {
-        let ptr = NonNull::new(offset as *mut u8).ok_or_else(|| Error::NullPtr)?;
-        self.ptr = ptr;
+    /// Set the cursor to a byte offset within this mapping.
+    pub unsafe fn ptr_seek(&mut self, address: usize) -> Result<()> {
+        self.ptr = NonNull::new(address as *mut u8).ok_or_else(|| Error::NullPtr)?;
 
         Ok(())
+    }
+    pub fn ptr_from_addr<T>(&self, address: usize) -> Result<NonNull<T>> {
+        NonNull::new(address as *mut T).ok_or_else(|| Error::NullPtr)
     }
 
     ///# Safety
@@ -99,7 +106,7 @@ impl Mapping {
 
         Ok(mem)
     }
-    pub fn write_header(&self, header: SharedHeader) -> & mut SharedHeader {
+    pub fn write_header(&self, header: SharedHeader) -> &mut SharedHeader {
         let mut head_ptr = self.ptr.cast::<SharedHeader>();
 
         unsafe {
@@ -107,12 +114,26 @@ impl Mapping {
             head_ptr.as_mut()
         }
     }
+    pub unsafe fn write<T>(&mut self, offset: usize, data: T) -> Result<()> {
+        self.ptr_seek(offset)?;
+        unsafe {
+            self.ptr.cast::<T>().write(data);
+        }
+        Ok(())
+    }
+
+    pub fn attomic_bool_slice(&mut self) -> &[AtomicBool] {
+        let bitmap = self.header().bitmap();
+        self.ptr_from_addr::<&[AtomicBool]>(bitmap.offset as usize);
+
+        unsafe { std::slice::from_raw_parts(bitmap.offset as *const AtomicBool, bitmap.len as usize) }
+    }
 }
 
 impl Drop for Mapping {
     fn drop(&mut self) {
-        self.reset_ptr();
         unsafe {
+            self.reset_ptr();
             let ptr = self.ptr.as_ptr() as *mut c_void;
             libc::munmap(ptr, self.size as usize);
             libc::close(self.fd);

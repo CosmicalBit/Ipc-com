@@ -3,12 +3,12 @@ use crate::shared_mem::Mapping;
 use crate::shared_mem::Result;
 use std::io;
 
-struct SharedMemory{
+pub struct SharedMemory {
     mem: Mapping,
 }
 
-impl SharedMemory{
-    pub fn new(name: &str, size: usize) -> Result<()> {
+impl SharedMemory {
+    pub fn new(name: &str, size: usize) -> Result<Self> {
         let size = size as u32;
         //create header and init mem
         let header = SharedHeader::new(name, size)?;
@@ -18,11 +18,16 @@ impl SharedMemory{
         header.bitmap().write(&mut mem)?;
 
         //write the header and save it
-        let header = mem.write_header(header);
-        let shared = SharedMemory {  mem };
+        mem.write_header(header);
+        let shared = SharedMemory { mem };
 
-        //TODO init the alloc header
+        Ok(shared)
+    }
+    pub fn alloc(&mut self, size: usize) -> Result<()> {
+        let header = self.mem.attomic_bool_slice();
 
+        //TODO
+        
         Ok(())
     }
 }
