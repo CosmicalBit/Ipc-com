@@ -76,7 +76,7 @@ pub(crate) trait AccessLayout {
 }
 impl AccessLayout for ReadWrite {
     fn prefix_size() -> usize {
-        size_of::<AtomicU64>().next_multiple_of(align_of::<u32>())
+        size_of::<AtomicU64>() + size_of::<u32>()
     }
 }
 impl AccessLayout for ReadOnly {

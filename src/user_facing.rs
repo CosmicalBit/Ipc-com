@@ -148,6 +148,8 @@ impl<T: SharedData> CreateOutput<T> for ReadWrite {
     }
 }
 impl<T: SharedData> CreateOutput<T> for ReadOnly {
-    type Output = ();
-    fn finish(_allocation: Allocation<T, Self>) -> Self::Output {}
+    type Output = Allocation<T, ReadOnly>;
+    fn finish(allocation: Allocation<T, Self>) -> Self::Output {
+        allocation
+    }
 }

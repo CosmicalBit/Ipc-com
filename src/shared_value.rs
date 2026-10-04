@@ -96,12 +96,26 @@ mod test {
             Ok(String::from_utf8_lossy(bytes).to_string())
         }
     }
-    fn round_trip() {
+    #[test]
+    fn round_trip_same_size() {
         let string = String::from("batata");
 
         let mem = SharedMemoryOptions::new().to_mutable().name("nana").with_data(string.clone()).create().unwrap();
         let red = mem.read().unwrap();
 
         assert!(red == string);
+    }
+
+    #[test]
+    fn round_trip_realloc() {
+        let string = String::from("b");
+
+        let to_write = String::from("dkkkkkkkkkkkkkkkslfjlsdkjflsdkjflskdjfkdsljflsdjfi f8 ");
+        let mut mem = SharedMemoryOptions::new().to_mutable().name("nana").with_data(string).create().unwrap();
+
+        mem.write(to_write.clone()).unwrap();
+        let red = mem.read().unwrap();
+
+        assert!(red == to_write);
     }
 }

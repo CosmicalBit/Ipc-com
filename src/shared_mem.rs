@@ -48,7 +48,11 @@ impl Mapping {
     }
 
     pub fn remap(&mut self, new_len: usize) -> Result<()> {
-        let fd = unsafe { libc::ftruncate(self.fd, new_len as libc::off_t) };
+        let result = unsafe { libc::ftruncate(self.fd, new_len as libc::off_t) };
+
+        if result != 0 {
+            return Err(Error::FdError);
+        }
 
         let new_ptr = unsafe { libc::mremap(self.start.as_ptr().cast(), self.size, new_len, MREMAP_MAYMOVE) };
 
@@ -57,7 +61,7 @@ impl Mapping {
         }
 
         self.start = NonNull::new(new_ptr.cast::<u8>()).ok_or(Error::NullPtr)?;
-        self.fd = fd;
+        self.size = new_len;
 
         Ok(())
     }
@@ -126,10 +130,10 @@ impl Mapping {
             self.remap(required_size)?;
         }
 
-        let len = len as u32;
+        let new_len = bytes.len() as u32;
 
         unsafe {
-            self.write_bytes(&len.to_be_bytes(), size_of::<AtomicU64>());
+            self.write_bytes(&new_len.to_be_bytes(), size_of::<AtomicU64>());
             self.write_bytes(&bytes, offset);
         };
 
@@ -139,7 +143,7 @@ impl Mapping {
         let mem = unsafe {
             let name = CString::from_str(name)?;
 
-            let fd = libc::memfd_create(name.as_ptr(), libc::MFD_CLOEXEC);
+            let fd = libc::shm_open(name.as_ptr(), libc::O_CREAT | libc::O_RDWR, 0o600);
 
             if fd < 0 {
                 return Err(Error::FdError);
