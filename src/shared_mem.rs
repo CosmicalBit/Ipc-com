@@ -203,9 +203,10 @@ pub(crate) fn aligned_offset<T>(offset: usize) -> usize {
 }
 
 impl Drop for Mapping {
+    #[inline]
     fn drop(&mut self) {
         unsafe {
-            let name = CString::new(self.name.clone()).expect("impossible cstring conversion");
+            let name = CString::new(self.name.as_str()).expect("impossible cstring conversion");
             let ptr = self.start.as_ptr() as *mut c_void;
             libc::munmap(ptr, self.size);
             libc::close(self.fd);
