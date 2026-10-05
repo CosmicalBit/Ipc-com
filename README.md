@@ -53,7 +53,7 @@ The example opens both handles in one process. For IPC, create the value in one 
 For a value that does not need updates, omit `.to_mutable()`. Declare the resulting handle `mut` to call `read()`; it does not expose `write()`. Reading and blocking waits need a mutable handle because its mapping may grow when the stored value grows.
 
 To wait for an update, call `reader.wait_for_change_value()?` or use
-`reader.wait_for_change_async::<()>()?` and join the returned thread handle.
+`reader.wait_for_change_async()?` and join the returned thread handle.
 Only a value created with `.to_mutable()` exposes `write()`; connected readers
 remain read-only. Waiting ignores interrupted and stale futex waits until a
 successful write advances the update counter.

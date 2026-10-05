@@ -53,12 +53,12 @@ impl Mapping {
     pub(crate) fn name(&self) -> &CString {
         &self.name
     }
-    fn new(mut_ptr: *mut u8, size: usize, fd: i32, name: &str, owner: bool) -> Result<Self> {
+    fn new(mut_ptr: *mut u8, size: usize, fd: i32, name: CString, owner: bool) -> Result<Self> {
         Ok(Mapping {
             start: NonNull::new(mut_ptr).ok_or(Error::NullPtr)?,
             size,
             fd,
-            name: CString::new(name)?,
+            name,
             owner,
         })
     }
@@ -96,10 +96,13 @@ impl Mapping {
             return Err(Error::Mmap(error));
         }
 
-        Self::new(ptr.cast(), size, fd, name.to_str().unwrap(), false)
+        Self::new(ptr.cast(), size, fd, name, false)
     }
 
     pub(crate) fn remap(&mut self, new_len: usize) -> Result<()> {
+        let old_size = self.size;
+        let old_file_size = libc::off_t::try_from(old_size)?;
+
         let file_size = libc::off_t::try_from(new_len)?;
         let result = unsafe { libc::ftruncate(self.fd, file_size) };
 
@@ -110,7 +113,11 @@ impl Mapping {
         let new_ptr = unsafe { libc::mremap(self.start.as_ptr().cast(), self.size, new_len, MREMAP_MAYMOVE) };
 
         if new_ptr == libc::MAP_FAILED {
-            return Err(Error::Mmap(std::io::Error::last_os_error()));
+            let error = std::io::Error::last_os_error();
+            unsafe {
+                libc::ftruncate(self.fd, old_file_size);
+            }
+            return Err(Error::Mmap(error));
         }
 
         self.start = NonNull::new(new_ptr.cast::<u8>()).ok_or(Error::NullPtr)?;
@@ -133,7 +140,7 @@ impl Mapping {
         //Safety: This two arent even the smae memory (one is mmap and the othre is process normal
         //ram mem) so its safe
         unsafe { ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len()) };
-        offset + data.len()
+        end
     }
     //returns the offset where the ptr was left of
     pub(crate) unsafe fn write_concrete_type<T>(&self, data: T, offset: usize) -> usize {
@@ -143,7 +150,7 @@ impl Mapping {
 
         let ptr = unsafe { self.start.add(offset).cast::<T>() };
         unsafe { ptr.write(data) }
-        offset + size_of::<T>()
+        end
     }
 
     pub(crate) unsafe fn read_bytes(&self, ammount: usize, offset: usize) -> &[u8] {
@@ -237,7 +244,7 @@ impl Mapping {
 
             let bytes = ptr.cast::<u8>();
 
-            Mapping::new(bytes, size, fd, &name.to_string_lossy(), true)?
+            Mapping::new(bytes, size, fd, name, true)?
         };
 
         Ok(mem)
@@ -257,5 +264,27 @@ impl Drop for Mapping {
                 shm_unlink(self.name.as_ptr());
             }
         }
+    }
+}
+
+#[cfg(all(test, not(miri)))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_remap_restores_file_size_and_keeps_mapping_usable() {
+        let name = format!("/ipc_com_failed_remap_{}", std::process::id());
+        let mut mapping = Mapping::init_shared_memory(&name, HEADER_SIZE).unwrap();
+
+        // Linux rejects a zero-length mremap after ftruncate has succeeded.
+        assert!(matches!(mapping.remap(0), Err(Error::Mmap(_))));
+
+        let mut stat = MaybeUninit::<libc::stat>::uninit();
+        assert_eq!(unsafe { libc::fstat(mapping.fd, stat.as_mut_ptr()) }, 0);
+        assert_eq!(unsafe { stat.assume_init() }.st_size, HEADER_SIZE as libc::off_t);
+
+        mapping.remap(HEADER_SIZE + 1).unwrap();
+        unsafe { mapping.write_bytes(&[42], HEADER_SIZE) };
+        assert_eq!(unsafe { mapping.read_bytes(1, HEADER_SIZE) }, &[42]);
     }
 }

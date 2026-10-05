@@ -54,7 +54,7 @@ fn main() -> Result<()> {
 
     // The async method returns a thread handle, so other work can continue
     // before joining it to get the updated value.
-    let pending = reader.wait_for_change_async::<()>()?;
+    let pending = reader.wait_for_change_async()?;
     std::thread::sleep(Duration::from_millis(50));
     creator.write(&Moment { day: 33 })?;
     assert_eq!(pending.join().expect("wait thread panicked")?, Moment { day: 33 });

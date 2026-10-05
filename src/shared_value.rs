@@ -131,7 +131,7 @@ where
         self.read()
     }
     ///waits  for a change nonblockin for a change nonblocking
-    pub fn wait_for_change_async<F>(&self) -> Result<std::thread::JoinHandle<Result<T>>>
+    pub fn wait_for_change_async(&self) -> Result<std::thread::JoinHandle<Result<T>>>
     where
         T: Send + 'static,
     {
@@ -241,7 +241,7 @@ mod test {
         let mut owner = SharedMemoryOptions::new().to_mutable().name(&name).with_data(String::from("before")).create().unwrap();
         let reader = SharedValue::<String, ReadOnly>::new_reader(&name).unwrap();
 
-        let waiting = reader.wait_for_change_async::<()>().unwrap();
+        let waiting = reader.wait_for_change_async().unwrap();
         std::thread::sleep(Duration::from_millis(50));
         owner.write(&String::from("after")).unwrap();
 
