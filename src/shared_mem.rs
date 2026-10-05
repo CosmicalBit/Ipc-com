@@ -1,4 +1,4 @@
-use libc::{MREMAP_MAYMOVE, shm_unlink};
+use libc::{MREMAP_MAYMOVE, close, shm_unlink};
 use std::ffi::NulError;
 use std::mem::MaybeUninit;
 use std::os::raw::c_void;
@@ -134,27 +134,39 @@ impl Mapping {
     pub(crate) fn atomic_ref(&self) -> Result<&AtomicU32> {
         unsafe { self.start.as_ptr().cast::<AtomicU32>().as_ref().ok_or(Error::NullPtr) }
     }
+    pub(crate) fn atomic_gen(&self) -> Result<&AtomicU32> {
+        unsafe { self.start.add(size_of::<AtomicU32>()).as_ptr().cast::<AtomicU32>().as_ref().ok_or(Error::NullPtr) }
+    }
     pub(crate) fn read_data<T>(&self) -> Result<T>
     where
         T: SharedData,
     {
-        let bytes: [u8; 4] = unsafe { self.read_bytes(size_of::<u32>(), size_of::<AtomicU32>()).try_into().unwrap() };
+        let bytes: [u8; 4] = unsafe { self.read_bytes(size_of::<u32>(), size_of::<AtomicU32>() + size_of::<AtomicU32>()).try_into().unwrap() };
         let len = u32::from_be_bytes(bytes) as usize;
-        let bytes = unsafe { self.read_bytes(len, size_of::<AtomicU32>() + size_of::<u32>()) };
-
-        let data = T::from_bytes(bytes).map_err(|_| Error::TryConversion)?;
+        let required_size = HEADER_SIZE.checked_add(len).ok_or(Error::TryConversion)?;
+        let data = if required_size <= self.size {
+            let bytes = unsafe { self.read_bytes(len, HEADER_SIZE) };
+            T::from_bytes(bytes)
+        } else {
+            // A reader may have connected before a writer expanded the object.
+            // Map the larger payload while the caller holds the shared lock.
+            let ptr = unsafe { libc::mmap(ptr::null_mut(), required_size, libc::PROT_READ, libc::MAP_SHARED, self.fd, 0) };
+            if ptr == libc::MAP_FAILED {
+                return Err(Error::Mmap);
+            }
+            let bytes = unsafe { std::slice::from_raw_parts((ptr as *const u8).add(HEADER_SIZE), len) };
+            let data = T::from_bytes(bytes);
+            unsafe { libc::munmap(ptr, required_size) };
+            data
+        }
+        .map_err(|_| Error::TryConversion)?;
         Ok(data)
     }
 
-    pub(crate) fn write_data<T>(&mut self, data: &T, _atomic: AtomicU32) -> Result<()>
+    pub(crate) fn write_data<T>(&mut self, data: &T) -> Result<()>
     where
         T: SharedData,
     {
-        let bytes: [u8; 4] = unsafe { self.read_bytes(size_of::<u32>(), size_of::<AtomicU32>()).try_into().unwrap() };
-        let _len = u32::from_be_bytes(bytes) as usize;
-
-        let offset = size_of::<AtomicU32>() + size_of::<u32>();
-
         let bytes = data.as_bytes()?;
 
         let required_size = HEADER_SIZE + bytes.len();
@@ -166,8 +178,8 @@ impl Mapping {
         let new_len = bytes.len() as u32;
 
         unsafe {
-            self.write_bytes(&new_len.to_be_bytes(), size_of::<AtomicU32>());
-            self.write_bytes(&bytes, offset);
+            self.write_bytes(&new_len.to_be_bytes(), size_of::<AtomicU32>() * 2);
+            self.write_bytes(&bytes, HEADER_SIZE);
         };
 
         Ok(())
@@ -189,12 +201,16 @@ impl Mapping {
             let result = libc::ftruncate(fd, size as libc::off_t);
 
             if result != 0 {
+                close(fd);
+                shm_unlink(name.as_ptr());
                 return Err(Error::FileDescriptor);
             }
 
             let ptr = libc::mmap(ptr::null_mut(), size, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, fd, 0);
 
             if ptr == libc::MAP_FAILED {
+                close(fd);
+                shm_unlink(name.as_ptr());
                 return Err(Error::Mmap);
             }
 

@@ -48,15 +48,16 @@ where
 
         Self::lock(atomic);
 
-        let atomic = AtomicU32::new(atomic.load(Ordering::Relaxed));
-        let res = self.mapping.write_data(data, atomic);
+        let res = self.mapping.write_data(data);
         let new_atomic = self.mapping.atomic_ref()?;
 
         Self::unlock(new_atomic);
 
-        //wake anyone waiting on change
-        let futex = Futex::new(new_atomic);
-        futex.wake_all()?;
+        if res.is_ok() {
+            let generation = self.mapping.atomic_gen()?;
+            generation.fetch_add(1, Ordering::Release);
+            Futex::new(generation).wake_all()?;
+        }
 
         res
     }
@@ -102,22 +103,6 @@ impl<T> SharedValue<T, ReadOnly>
 where
     T: SharedData,
 {
-    ///user_facing: used to switch from read_only to readwrite
-    ///
-    /// #Safety
-    /// be carefull, you are able to change to mutable even if the creator selected as nonmutable.
-    pub fn to_mut(self) -> SharedValue<T, ReadWrite> {
-        SharedValue::<T, ReadWrite> {
-            mapping: self.mapping,
-            _phantom: PhantomData,
-        }
-    }
-}
-
-impl<T> SharedValue<T, ReadOnly>
-where
-    T: SharedData,
-{
     ///user_facing: function for reading IPC data from the `name`
     pub fn new_reader(name: &str) -> Result<Self> {
         let name = if name.starts_with('/') { name.to_owned() } else { format!("/{name}") };
@@ -131,14 +116,14 @@ impl<T, Access> SharedValue<T, Access>
 where
     T: SharedData,
 {
-    ///this fucntion waits for a change (blocking) and returns the current value
+    /// Blocks until a successful write, then returns the current value.
     pub fn wait_for_change_value(&self) -> Result<T> {
-        let atomic = self.mapping.atomic_ref()?;
-        let cpy = atomic.load(Ordering::Relaxed);
-
-        let futex = Futex::new(atomic);
-        futex.wait(cpy)?;
-
+        let generation = self.mapping.atomic_gen()?;
+        let expected = generation.load(Ordering::Acquire);
+        let futex = Futex::new(generation);
+        while generation.load(Ordering::Acquire) == expected {
+            futex.wait(expected)?;
+        }
         self.read()
     }
     ///waits  for a change nonblockin for a change nonblocking
@@ -195,6 +180,16 @@ mod test {
     }
 
     #[test]
+    fn existing_reader_reads_grown_value() {
+        let name = format!("ipc_com_grown_reader_{}", std::process::id());
+        let mut owner = SharedMemoryOptions::new().to_mutable().name(&name).with_data(String::from("b")).create().unwrap();
+        let reader = SharedValue::<String, ReadOnly>::new_reader(&name).unwrap();
+
+        owner.write(&String::from("a much longer value")).unwrap();
+        assert_eq!(reader.read().unwrap(), "a much longer value");
+    }
+
+    #[test]
     fn read_only_creation_uses_shared_header() {
         let name = format!("ipc_com_read_only_{}", std::process::id());
         let value = String::from("read only data");
@@ -218,17 +213,16 @@ mod test {
     #[test]
     fn blocking_wait_returns_updated_value() {
         let name = format!("ipc_com_blocking_wait_{}", std::process::id());
-        let _owner = SharedMemoryOptions::new().to_mutable().name(&name).with_data(String::from("before")).create().unwrap();
-        let reader = SharedValue::<String, ReadOnly>::new_reader(&name).unwrap();
+        let mut owner = SharedMemoryOptions::new().to_mutable().name(&name).with_data(String::from("before")).create().unwrap();
 
         std::thread::scope(|scope| {
-            scope.spawn(|| {
-                let mut writer = SharedValue::<String, ReadOnly>::new_reader(&name).unwrap().to_mut();
-                std::thread::sleep(Duration::from_millis(50));
-                writer.write(&String::from("after")).unwrap();
+            let waiting = scope.spawn(|| {
+                let reader = SharedValue::<String, ReadOnly>::new_reader(&name).unwrap();
+                reader.wait_for_change_value().unwrap()
             });
-
-            assert_eq!(reader.wait_for_change_value().unwrap(), "after");
+            std::thread::sleep(Duration::from_millis(50));
+            owner.write(&String::from("after a longer write")).unwrap();
+            assert_eq!(waiting.join().unwrap(), "after a longer write");
         });
     }
 
@@ -275,7 +269,7 @@ mod test {
         let initial = TestData { name: 0u32.to_be_bytes(), year: 0 };
 
         // Only create the shared memory here.
-        let _owner = SharedMemoryOptions::new().to_mutable().name(&name).with_data(initial).create().unwrap();
+        let mut owner = SharedMemoryOptions::new().to_mutable().name(&name).with_data(initial).create().unwrap();
 
         thread::scope(|scope| {
             for _ in 0..READERS {
@@ -293,18 +287,14 @@ mod test {
                 });
             }
 
-            scope.spawn(|| {
-                let mut writer = SharedValue::<TestData, ReadOnly>::new_reader(&name).unwrap().to_mut();
-
-                for i in 0..ITERATIONS {
-                    writer
-                        .write(&TestData {
-                            name: (i as u32).to_be_bytes(),
-                            year: i,
-                        })
-                        .unwrap();
-                }
-            });
+            for i in 0..ITERATIONS {
+                owner
+                    .write(&TestData {
+                        name: (i as u32).to_be_bytes(),
+                        year: i,
+                    })
+                    .unwrap();
+            }
         });
     }
 }

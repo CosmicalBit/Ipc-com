@@ -48,11 +48,13 @@ fn main() -> Result<()> {
 }
 ```
 
-The example opens both handles in one process. For IPC, create the value in one process and call `SharedValue::<YourType, ReadOnly>::new_reader(name)` in another process while the creator is still alive. Both processes must use the same name and the same encoding. Names may be passed with or without a leading `/`.
+The example opens both handles in one process. For IPC, create the value in one process and call `SharedValue::<YourType, ReadOnly>::new_reader(name)` in another process while the creator is still alive. Both processes must use the same name, encoding, and crate version because the shared-memory header is part of the format. Names may be passed with or without a leading `/`.
 
 For a value that does not need updates, omit `.to_mutable()`. The resulting handle can still call `read()`, but does not expose `write()`.
 
 To wait for an update, call `reader.wait_for_change_value()?` or use
 `reader.wait_for_change_async::<()>()?` and join the returned thread handle.
-An existing reader can be turned into a writer with `reader.to_mut()`.
+Only a value created with `.to_mutable()` exposes `write()`; connected readers
+remain read-only. Waiting ignores interrupted and stale futex waits until a
+successful write advances the update counter.
 See the [complete example](examples/exemple1.rs), runnable with `cargo run --example exemple1`.

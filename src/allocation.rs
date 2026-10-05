@@ -6,7 +6,7 @@ use std::sync::atomic::AtomicU32;
 pub struct ReadOnly;
 pub struct ReadWrite;
 
-pub(crate) const HEADER_SIZE: usize = size_of::<AtomicU32>() + size_of::<u32>();
+pub(crate) const HEADER_SIZE: usize = size_of::<AtomicU32>() + size_of::<u32>() + size_of::<AtomicU32>();
 
 #[repr(C)]
 pub(crate) struct Header<T, Access>
@@ -46,6 +46,7 @@ where
 
     pub(crate) fn write_all(&mut self) -> Result<()> {
         let offset = unsafe { self.mapping.write_concrete_type(AtomicU32::new(0), 0) };
+        let offset = unsafe { self.mapping.write_concrete_type(AtomicU32::new(0), offset) };
         let offset = unsafe { self.mapping.write_bytes(&self.header.len_bytes(), offset) };
         unsafe { self.mapping.write_bytes(&self.header.data.as_bytes()?, offset) };
         Ok(())
