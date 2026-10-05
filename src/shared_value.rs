@@ -86,14 +86,18 @@ where
     fn unlock(atomic: &AtomicU32) {
         atomic.fetch_add(1, atomic::Ordering::Release);
     }
-    pub fn read(&self) -> Result<T> {
-        let atomic = self.mapping.atomic_ref()?;
+    /// Reads the current value, growing this handle's mapping if needed.
+    pub fn read(&mut self) -> Result<T> {
+        {
+            let atomic = self.mapping.atomic_ref()?;
 
-        Self::lock(atomic);
-
-        //dont propagate upstream error or we will be forever locked
+            Self::lock(atomic);
+        }
+        // Unlock even when reading or decoding fails.
         let result = self.mapping.read_data();
 
+        // The lock address may have moved with the mapping.
+        let atomic = self.mapping.atomic_ref()?;
         Self::unlock(atomic);
 
         result
@@ -117,7 +121,7 @@ where
     T: SharedData,
 {
     /// Blocks until a successful write, then returns the current value.
-    pub fn wait_for_change_value(&self) -> Result<T> {
+    pub fn wait_for_change_value(&mut self) -> Result<T> {
         let generation = self.mapping.atomic_gen()?;
         let expected = generation.load(Ordering::Acquire);
         let futex = Futex::new(generation);
@@ -134,7 +138,7 @@ where
         let name = self.mapping.name().to_owned();
 
         Ok(std::thread::spawn(move || -> Result<T> {
-            let value: SharedValue<T, ReadOnly> = SharedValue::new_reader(&name)?;
+            let mut value: SharedValue<T, ReadOnly> = SharedValue::new_reader(&name)?;
             value.wait_for_change_value()
         }))
     }
@@ -160,7 +164,7 @@ mod test {
         let string = String::from("batata");
         let name = format!("/ipc_com_same_size_{}", std::process::id());
 
-        let mem = SharedMemoryOptions::new().to_mutable().name(&name).with_data(string.clone()).create().unwrap();
+        let mut mem = SharedMemoryOptions::new().to_mutable().name(&name).with_data(string.clone()).create().unwrap();
         let red = mem.read().unwrap();
 
         assert!(red == string);
@@ -184,10 +188,14 @@ mod test {
     fn existing_reader_reads_grown_value() {
         let name = format!("ipc_com_grown_reader_{}", std::process::id());
         let mut owner = SharedMemoryOptions::new().to_mutable().name(&name).with_data(String::from("b")).create().unwrap();
-        let reader = SharedValue::<String, ReadOnly>::new_reader(&name).unwrap();
+        let mut reader = SharedValue::<String, ReadOnly>::new_reader(&name).unwrap();
 
         owner.write(&String::from("a much longer value")).unwrap();
         assert_eq!(reader.read().unwrap(), "a much longer value");
+        assert_eq!(reader.read().unwrap(), "a much longer value");
+
+        owner.write(&String::from("an even longer value than before")).unwrap();
+        assert_eq!(reader.read().unwrap(), "an even longer value than before");
     }
 
     #[test]
@@ -195,7 +203,7 @@ mod test {
         let name = format!("ipc_com_read_only_{}", std::process::id());
         let value = String::from("read only data");
 
-        let mem = SharedMemoryOptions::new().name(&name).with_data(value.clone()).create().unwrap();
+        let mut mem = SharedMemoryOptions::new().name(&name).with_data(value.clone()).create().unwrap();
         assert_eq!(mem.read().unwrap(), value);
     }
 
@@ -204,8 +212,8 @@ mod test {
         let name = format!("ipc_com_reader_{}", std::process::id());
         let value = String::from("shajred data");
 
-        let owner = SharedMemoryOptions::new().to_mutable().name(&name).with_data(value.clone()).create().unwrap();
-        let reader = SharedValue::<String, ReadOnly>::new_reader(&name).unwrap();
+        let mut owner = SharedMemoryOptions::new().to_mutable().name(&name).with_data(value.clone()).create().unwrap();
+        let mut reader = SharedValue::<String, ReadOnly>::new_reader(&name).unwrap();
 
         assert_eq!(owner.read().unwrap(), value);
         assert_eq!(reader.read().unwrap(), value);
@@ -218,7 +226,7 @@ mod test {
 
         std::thread::scope(|scope| {
             let waiting = scope.spawn(|| {
-                let reader = SharedValue::<String, ReadOnly>::new_reader(&name).unwrap();
+                let mut reader = SharedValue::<String, ReadOnly>::new_reader(&name).unwrap();
                 reader.wait_for_change_value().unwrap()
             });
             std::thread::sleep(Duration::from_millis(50));
@@ -277,7 +285,7 @@ mod test {
                 let name = &name;
 
                 scope.spawn(move || {
-                    let reader = SharedValue::<TestData, ReadOnly>::new_reader(name).unwrap();
+                    let mut reader = SharedValue::<TestData, ReadOnly>::new_reader(name).unwrap();
 
                     for _ in 0..ITERATIONS {
                         let value = reader.read().unwrap();

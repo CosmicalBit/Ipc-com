@@ -137,30 +137,27 @@ impl Mapping {
     pub(crate) fn atomic_gen(&self) -> Result<&AtomicU32> {
         unsafe { self.start.add(size_of::<AtomicU32>()).as_ptr().cast::<AtomicU32>().as_ref().ok_or(Error::NullPtr) }
     }
-    pub(crate) fn read_data<T>(&self) -> Result<T>
+    pub(crate) fn read_data<T>(&mut self) -> Result<T>
     where
         T: SharedData,
     {
         let bytes: [u8; 4] = unsafe { self.read_bytes(size_of::<u32>(), size_of::<AtomicU32>() + size_of::<AtomicU32>()).try_into().unwrap() };
         let len = u32::from_be_bytes(bytes) as usize;
         let required_size = HEADER_SIZE.checked_add(len).ok_or(Error::TryConversion)?;
-        let data = if required_size <= self.size {
-            let bytes = unsafe { self.read_bytes(len, HEADER_SIZE) };
-            T::from_bytes(bytes)
-        } else {
-            // A reader may have connected before a writer expanded the object.
-            // Map the larger payload while the caller holds the shared lock.
-            let ptr = unsafe { libc::mmap(ptr::null_mut(), required_size, libc::PROT_READ, libc::MAP_SHARED, self.fd, 0) };
-            if ptr == libc::MAP_FAILED {
+
+        if required_size > self.size {
+            // Grow this mapping
+            let ptr = unsafe { libc::mremap(self.start.as_ptr().cast(), self.size, required_size, MREMAP_MAYMOVE) };
+            if ptr == libc::MAP_FAILED || ptr.is_null() {
                 return Err(Error::Mmap);
             }
-            let bytes = unsafe { std::slice::from_raw_parts((ptr as *const u8).add(HEADER_SIZE), len) };
-            let data = T::from_bytes(bytes);
-            unsafe { libc::munmap(ptr, required_size) };
-            data
+
+            // Safety: `ptr` was checked above neither MAP_FAILED or its null
+            self.start = unsafe { NonNull::new_unchecked(ptr.cast::<u8>()) };
+            self.size = required_size;
         }
-        .map_err(|_| Error::TryConversion)?;
-        Ok(data)
+        let bytes = unsafe { self.read_bytes(len, HEADER_SIZE) };
+        T::from_bytes(bytes).map_err(|_| Error::TryConversion)
     }
 
     pub(crate) fn write_data<T>(&mut self, data: &T) -> Result<()>
@@ -225,6 +222,8 @@ impl Mapping {
 impl Drop for Mapping {
     #[inline]
     fn drop(&mut self) {
+        //Safety: This is needed for the safe cleanup plus the pointers arent null here bcs it uses
+        //[`NonNull`] type
         unsafe {
             let ptr = self.start.as_ptr() as *mut c_void;
             libc::munmap(ptr, self.size);
