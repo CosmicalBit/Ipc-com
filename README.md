@@ -4,11 +4,10 @@ Simple shared-memory interprocess communication for Rust on Linux. Create a name
 
 ## Quick start
 
-Add the crate to your project:
+Add the crate to your project with Cargo:
 
-```toml
-[dependencies]
-ipc-com = "0.1"
+```sh
+cargo add ipc-com
 ```
 
 Define how your type is encoded, create a value, and connect a second handle:
