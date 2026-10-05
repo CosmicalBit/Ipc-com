@@ -1,26 +1,25 @@
+use libc::{MREMAP_MAYMOVE, shm_unlink};
 use std::ffi::NulError;
 use std::intrinsics::copy_nonoverlapping;
+use std::mem::MaybeUninit;
 use std::os::raw::c_void;
 use std::ptr;
 use std::ptr::NonNull;
 use std::sync::atomic::AtomicU64;
 use std::{ffi::CString, str::FromStr};
 
-use libc::MREMAP_MAYMOVE;
-
-use crate::allocation::{AccessLayout, ReadWrite};
+use crate::allocation::HEADER_SIZE;
 use crate::shared_value::SharedData;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {
-    FdError,
+    FileDescriptor,
     Mmap,
     Null(NulError),
     NullPtr,
-    TryError,
-    DifferentLenghsSameMem,
+    TryConversion,
 }
 
 impl From<NulError> for Error {
@@ -29,29 +28,59 @@ impl From<NulError> for Error {
     }
 }
 
-pub struct Mapping {
+pub(crate) struct Mapping {
     start: NonNull<u8>,
     ptr: NonNull<u8>,
     size: usize,
     fd: i32,
+    name: String,
 }
 //TODO add a show header funciton
 
 impl Mapping {
-    fn new(mut_ptr: *mut u8, size: usize, fd: i32) -> Result<Self> {
+    fn new(mut_ptr: *mut u8, size: usize, fd: i32, name: &str) -> Result<Self> {
         Ok(Mapping {
             start: NonNull::new(mut_ptr).ok_or(Error::NullPtr)?,
             ptr: NonNull::new(mut_ptr).ok_or(Error::NullPtr)?,
             size,
             fd,
+            name: name.to_string(),
         })
     }
+    pub(crate) fn new_connect(name: &str) -> Result<Self> {
+        let name = CString::new(name)?;
 
-    pub fn remap(&mut self, new_len: usize) -> Result<()> {
+        let fd = unsafe { libc::shm_open(name.as_ptr(), libc::O_RDWR, 0) };
+
+        if fd == -1 {
+            return Err(Error::FileDescriptor);
+        }
+
+        let mut stat = MaybeUninit::<libc::stat>::uninit();
+
+        if unsafe { libc::fstat(fd, stat.as_mut_ptr()) } == -1 {
+            unsafe { libc::close(fd) };
+            return Err(Error::FileDescriptor);
+        }
+
+        let stat = unsafe { stat.assume_init() };
+        let size = stat.st_size as usize;
+
+        let ptr = unsafe { libc::mmap(std::ptr::null_mut(), size, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, fd, 0) };
+
+        if ptr == libc::MAP_FAILED {
+            unsafe { libc::close(fd) };
+            return Err(Error::Mmap);
+        }
+
+        Self::new(ptr.cast(), size, fd, name.to_str().unwrap())
+    }
+
+    pub(crate) fn remap(&mut self, new_len: usize) -> Result<()> {
         let result = unsafe { libc::ftruncate(self.fd, new_len as libc::off_t) };
 
         if result != 0 {
-            return Err(Error::FdError);
+            return Err(Error::FileDescriptor);
         }
 
         let new_ptr = unsafe { libc::mremap(self.start.as_ptr().cast(), self.size, new_len, MREMAP_MAYMOVE) };
@@ -70,7 +99,7 @@ impl Mapping {
     /// pointed to a valid place
     /// aligned for `T`
     /// have size_of::<T>() available
-    pub unsafe fn write_bytes(&self, data: &[u8], offset: usize) -> usize {
+    pub(crate) unsafe fn write_bytes(&self, data: &[u8], offset: usize) -> usize {
         //check for out of bounds
         let end = offset.checked_add(data.len()).expect("write offset overflowed");
         assert!(end <= self.size, "write exceeded mapping");
@@ -80,7 +109,7 @@ impl Mapping {
         offset + data.len()
     }
     //returns the offset where the ptr was left of
-    pub unsafe fn write_concrete_type<T>(&self, data: T, offset: usize) -> usize {
+    pub(crate) unsafe fn write_concrete_type<T>(&self, data: T, offset: usize) -> usize {
         //check for out of bounds
         let end = offset.checked_add(size_of::<T>()).expect("write offset overflowed");
         assert!(end <= self.size, "write exceeded mapping");
@@ -90,7 +119,7 @@ impl Mapping {
         offset + size_of::<T>()
     }
 
-    pub unsafe fn read_bytes(&self, ammount: usize, offset: usize) -> &[u8] {
+    pub(crate) unsafe fn read_bytes(&self, ammount: usize, offset: usize) -> &[u8] {
         //protect the read
         let end = offset.checked_add(ammount).expect("read out of bounds");
         assert!(end <= self.size, "read excedded mapping");
@@ -98,10 +127,10 @@ impl Mapping {
         let ptr = unsafe { self.start.add(offset).as_ptr() };
         unsafe { std::slice::from_raw_parts(ptr, ammount) }
     }
-    pub fn atomic_ref(&self) -> Result<&AtomicU64> {
+    pub(crate) fn atomic_ref(&self) -> Result<&AtomicU64> {
         unsafe { self.start.as_ptr().cast::<AtomicU64>().as_ref().ok_or(Error::NullPtr) }
     }
-    pub fn read_data<T>(&self) -> Result<T>
+    pub(crate) fn read_data<T>(&self) -> Result<T>
     where
         T: SharedData,
     {
@@ -109,22 +138,22 @@ impl Mapping {
         let len = u32::from_be_bytes(bytes) as usize;
         let bytes = unsafe { self.read_bytes(len, size_of::<AtomicU64>() + size_of::<u32>()) };
 
-        let data = T::from_bytes(bytes).map_err(|_| Error::TryError)?;
+        let data = T::from_bytes(bytes).map_err(|_| Error::TryConversion)?;
         Ok(data)
     }
 
-    pub fn write_data<T>(&mut self, data: T, _atomic: AtomicU64) -> Result<()>
+    pub(crate) fn write_data<T>(&mut self, data: T, _atomic: AtomicU64) -> Result<()>
     where
         T: SharedData,
     {
         let bytes: [u8; 4] = unsafe { self.read_bytes(size_of::<u32>(), size_of::<AtomicU64>()).try_into().unwrap() };
-        let len = u32::from_be_bytes(bytes) as usize;
+        let _len = u32::from_be_bytes(bytes) as usize;
 
         let offset = size_of::<AtomicU64>() + size_of::<u32>();
 
         let bytes = data.as_bytes()?;
 
-        let required_size = ReadWrite::prefix_size() + bytes.len();
+        let required_size = HEADER_SIZE + bytes.len();
 
         if required_size > self.size {
             self.remap(required_size)?;
@@ -139,23 +168,23 @@ impl Mapping {
 
         Ok(())
     }
-    pub fn init_shared_mem(name: &str, size: usize) -> Result<Mapping> {
+    pub(crate) fn init_shared_mem(name: &str, size: usize) -> Result<Mapping> {
         let mem = unsafe {
             let name = CString::from_str(name)?;
 
             let fd = libc::shm_open(name.as_ptr(), libc::O_CREAT | libc::O_RDWR, 0o600);
 
             if fd < 0 {
-                return Err(Error::FdError);
+                return Err(Error::FileDescriptor);
             }
 
             let result = libc::ftruncate(fd, size as libc::off_t);
 
             if result != 0 {
-                return Err(Error::FdError);
+                return Err(Error::FileDescriptor);
             }
 
-            let ptr = libc::mmap(ptr::null_mut(), size as usize, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, fd, 0);
+            let ptr = libc::mmap(ptr::null_mut(), size, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, fd, 0);
 
             if ptr == libc::MAP_FAILED {
                 return Err(Error::Mmap);
@@ -163,7 +192,7 @@ impl Mapping {
 
             let bytes = ptr.cast::<u8>();
 
-            Mapping::new(bytes, size, fd)?
+            Mapping::new(bytes, size, fd, &name.to_string_lossy())?
         };
 
         Ok(mem)
@@ -172,12 +201,15 @@ impl Mapping {
 pub(crate) fn aligned_offset<T>(offset: usize) -> usize {
     offset.next_multiple_of(align_of::<T>())
 }
+
 impl Drop for Mapping {
     fn drop(&mut self) {
         unsafe {
+            let name = CString::new(self.name.clone()).expect("impossible cstring conversion");
             let ptr = self.start.as_ptr() as *mut c_void;
-            libc::munmap(ptr, self.size as usize);
+            libc::munmap(ptr, self.size);
             libc::close(self.fd);
+            shm_unlink(name.as_ptr());
         }
     }
 }

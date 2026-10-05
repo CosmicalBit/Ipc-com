@@ -4,15 +4,10 @@ use crate::shared_value::SharedData;
 use crate::user_facing::Transformed;
 use std::sync::atomic::AtomicU64;
 
-pub(crate) struct ReadOnly;
-pub(crate) struct ReadWrite {
-    pub(crate) atom_safe_counter: AtomicU64,
-}
-impl ReadWrite {
-    pub(crate) const fn new() -> Self {
-        Self { atom_safe_counter: AtomicU64::new(0) }
-    }
-}
+pub struct ReadOnly;
+pub struct ReadWrite;
+
+pub(crate) const HEADER_SIZE: usize = size_of::<AtomicU64>() + size_of::<u32>();
 
 #[repr(C)]
 pub(crate) struct Header<T, Access>
@@ -37,7 +32,7 @@ where
         })
     }
 }
-pub struct Allocation<T, Access>
+pub(crate) struct Allocation<T, Access>
 where
     T: crate::shared_value::SharedData,
 {
@@ -48,64 +43,29 @@ impl<T, Access> Allocation<T, Access>
 where
     T: crate::shared_value::SharedData,
 {
-    pub(crate) fn allocate_space(name: &str, header: Header<T, Access>) -> Result<Allocation<T, Access>>
-    where
-        Access: AccessLayout,
-    {
+    pub(crate) fn allocate_space(name: &str, header: Header<T, Access>) -> Result<Allocation<T, Access>> {
         let size = header.total_size_to_alloc()?;
         let mapping = Mapping::init_shared_mem(name, size)?;
         Ok(Allocation::<T, Access> { mapping, header })
+    }
+
+    pub(crate) fn write_all(&mut self) -> Result<()> {
+        let offset = unsafe { self.mapping.write_concrete_type(AtomicU64::new(0), 0) };
+        let offset = unsafe { self.mapping.write_bytes(&self.header.len_bytes(), offset) };
+        unsafe { self.mapping.write_bytes(&self.header.data.as_bytes()?, offset) };
+        Ok(())
     }
 }
 
 impl<T, Access> Header<T, Access>
 where
     T: SharedData,
-    Access: AccessLayout,
 {
     pub(crate) fn total_size_to_alloc(&self) -> Result<usize> {
         let data_len = self.data.as_bytes()?.len();
-        Ok(Access::prefix_size() + data_len)
+        Ok(HEADER_SIZE + data_len)
     }
     pub(crate) fn len_bytes(&self) -> [u8; 4] {
         self.len.to_be_bytes()
-    }
-}
-pub(crate) trait AccessLayout {
-    fn prefix_size() -> usize;
-}
-impl AccessLayout for ReadWrite {
-    fn prefix_size() -> usize {
-        size_of::<AtomicU64>() + size_of::<u32>()
-    }
-}
-impl AccessLayout for ReadOnly {
-    fn prefix_size() -> usize {
-        size_of::<u32>() + size_of::<u32>()
-    }
-}
-
-pub(crate) trait WriteAll {
-    fn write_all(&mut self) -> Result<()>;
-}
-
-impl<T: SharedData> WriteAll for Allocation<T, ReadOnly> {
-    fn write_all(&mut self) -> Result<()> {
-        let offset = unsafe { self.mapping.write_bytes(&self.header.len_bytes(), 0) };
-        unsafe { self.mapping.write_bytes(&self.header.data.as_bytes()?, offset) };
-        Ok(())
-    }
-}
-impl<T: SharedData> WriteAll for Allocation<T, ReadWrite> {
-    fn write_all(&mut self) -> Result<()> {
-        //false clone of the atomic
-        let current_atomic = AtomicU64::new(self.header.access.atom_safe_counter.load(std::sync::atomic::Ordering::Relaxed));
-        //write the atomic
-        let offset = unsafe { self.mapping.write_concrete_type::<AtomicU64>(current_atomic, 0) };
-
-        //write the lenght
-        let offset = unsafe { self.mapping.write_bytes(&self.header.len_bytes(), offset) };
-        unsafe { self.mapping.write_bytes(&self.header.data.as_bytes()?, offset) };
-        Ok(())
     }
 }

@@ -1,5 +1,5 @@
 use crate::{
-    allocation::{Allocation, ReadWrite},
+    allocation::{Allocation, ReadOnly, ReadWrite},
     shared_mem::{Mapping, Result},
 };
 use std::{
@@ -13,26 +13,46 @@ pub trait SharedData: Sized {
     fn as_bytes(&self) -> Result<Cow<'_, [u8]>>;
     fn from_bytes(bytes: &[u8]) -> Result<Self>;
 }
-pub struct SharedValue<T>
+
+pub struct SharedValue<T, Access>
 where
     T: SharedData,
 {
     mapping: Mapping,
-    _phantom: PhantomData<T>,
+    _phantom: PhantomData<(Access, T)>,
 }
 
-impl<T> From<Allocation<T, ReadWrite>> for SharedValue<T>
+impl<T, Access> From<Allocation<T, Access>> for SharedValue<T, Access>
 where
     T: SharedData,
 {
-    fn from(value: Allocation<T, ReadWrite>) -> Self {
+    fn from(value: Allocation<T, Access>) -> Self {
         Self {
             mapping: value.mapping,
             _phantom: PhantomData,
         }
     }
 }
-impl<T> SharedValue<T>
+impl<T> SharedValue<T, ReadWrite>
+where
+    T: SharedData,
+{
+    pub fn write(&mut self, data: T) -> Result<()> {
+        let atomic = self.mapping.atomic_ref()?;
+
+        Self::lock(atomic);
+
+        let atomic = AtomicU64::new(atomic.load(Ordering::Relaxed));
+        let res = self.mapping.write_data(data, atomic);
+
+        let new_atomic = self.mapping.atomic_ref()?;
+        Self::unlock(new_atomic);
+
+        res
+    }
+}
+
+impl<T, Access> SharedValue<T, Access>
 where
     T: SharedData,
 {
@@ -40,7 +60,7 @@ where
         loop {
             let current = atomic.load(std::sync::atomic::Ordering::Relaxed);
 
-            if current % 2 != 0 {
+            if !current.is_multiple_of(2) {
                 continue;
             }
 
@@ -67,18 +87,32 @@ where
 
         result
     }
-    pub fn write(&mut self, data: T) -> Result<()> {
-        let atomic = self.mapping.atomic_ref()?;
+}
+impl<T> SharedValue<T, ReadOnly>
+where
+    T: SharedData,
+{
+    ///user_facing: used to switch from read_only to readwrite
+    ///
+    /// #Safety
+    /// be carefull, you are able to change to mutable even if the creator selected as nonmutable.
+    pub fn to_mut(self) -> SharedValue<T, ReadWrite> {
+        SharedValue::<T, ReadWrite> {
+            mapping: self.mapping,
+            _phantom: PhantomData,
+        }
+    }
+}
 
-        Self::lock(atomic);
+impl<T> SharedValue<T, ReadOnly>
+where
+    T: SharedData,
+{
+    ///user_facing: function for reading IPC data
+    pub fn new_reader(name: &str) -> Result<Self> {
+        let mapping = Mapping::new_connect(name)?;
 
-        let atomic = AtomicU64::new(atomic.load(Ordering::Relaxed));
-        let res = self.mapping.write_data(data, atomic);
-
-        let new_atomic = self.mapping.atomic_ref()?;
-        Self::unlock(new_atomic);
-
-        res
+        Ok(Self { mapping, _phantom: PhantomData })
     }
 }
 
@@ -117,5 +151,26 @@ mod test {
         let red = mem.read().unwrap();
 
         assert!(red == to_write);
+    }
+
+    #[test]
+    fn read_only_creation_uses_shared_header() {
+        let name = format!("ipc_com_read_only_{}", std::process::id());
+        let value = String::from("read only data");
+
+        let mem = SharedMemoryOptions::new().name(&name).with_data(value.clone()).create().unwrap();
+        assert_eq!(mem.read().unwrap(), value);
+    }
+
+    #[test]
+    fn reader_connects_to_mutable_value() {
+        let name = format!("ipc_com_reader_{}", std::process::id());
+        let value = String::from("shared data");
+
+        let owner = SharedMemoryOptions::new().to_mutable().name(&name).with_data(value.clone()).create().unwrap();
+        let reader = SharedValue::<String, ReadOnly>::new_reader(&name).unwrap();
+
+        assert_eq!(owner.read().unwrap(), value);
+        assert_eq!(reader.read().unwrap(), value);
     }
 }

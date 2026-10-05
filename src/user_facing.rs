@@ -1,4 +1,4 @@
-use crate::allocation::{AccessLayout, Allocation, Header, ReadOnly, ReadWrite, WriteAll};
+use crate::allocation::{Allocation, Header, ReadOnly, ReadWrite};
 use crate::shared_mem::Result;
 use crate::shared_value::{SharedData, SharedValue};
 use std::marker::PhantomData;
@@ -15,7 +15,7 @@ where
     _state: PhantomData<(DataState, NameState)>,
 }
 
-pub struct Transformed<T, Access>
+pub(crate) struct Transformed<T, Access>
 where
     T: SharedData,
 {
@@ -28,17 +28,10 @@ impl<T, Access> Transformed<T, Access>
 where
     T: SharedData,
 {
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn to_header(self) -> Result<Header<T, Access>> {
-        let len = self.data.as_bytes()?.len() as u32;
-        Ok(Header {
-            len,
-            data: self.data,
-            access: self.access,
-        })
+    pub(crate) fn inner_create(self) -> Result<Allocation<T, Access>> {
+        let name = self.name.clone();
+        let header = Header::try_from(self)?;
+        Allocation::allocate_space(&name, header)
     }
 }
 
@@ -61,7 +54,7 @@ where
     T: SharedData,
 {
     pub fn to_mutable(self) -> SharedMemoryOptions<T, ReadWrite, DataState, NameState> {
-        let access = ReadWrite::new();
+        let access = ReadWrite;
         SharedMemoryOptions {
             data: self.data,
             name: self.name,
@@ -89,13 +82,11 @@ where
     }
 }
 
-impl<T, Access> SharedMemoryOptions<T, Access, Present, Present>
+impl<T> SharedMemoryOptions<T, ReadOnly, Present, Present>
 where
     T: SharedData,
-    Access: AccessLayout,
-    Allocation<T, Access>: WriteAll,
 {
-    pub(crate) fn inner_transform(self) -> Result<Transformed<T, Access>> {
+    fn inner_transform(self) -> Result<Transformed<T, ReadOnly>> {
         // The Present states guarantee both values were set by the builder.
         Ok(Transformed {
             data: self.data.expect("Present data state"),
@@ -103,53 +94,31 @@ where
             access: self.access,
         })
     }
-    //user facing abstranction
-    pub fn create(self) -> Result<Access::Output>
-    where
-        Access: CreateOutput<T>,
-    {
+
+    pub fn create(self) -> Result<SharedValue<T, ReadOnly>> {
         let transformed = self.inner_transform()?;
         let mut allocation = transformed.inner_create()?;
         allocation.write_all()?;
-
-        Ok(Access::finish(allocation))
+        Ok(SharedValue::from(allocation))
     }
 }
-impl<T, Access> Transformed<T, Access>
+
+impl<T> SharedMemoryOptions<T, ReadWrite, Present, Present>
 where
     T: SharedData,
 {
-    pub fn inner_create(self) -> Result<Allocation<T, Access>>
-    where
-        Access: AccessLayout,
-    {
-        //we just need the space for the data plus one for the atomic boollean
-        //TODO
-        let _size = size_of_val(&self.data);
-        let name = &self.name.to_owned();
-        let header = Header::try_from(self)?;
-        Allocation::allocate_space(name, header)
+    fn inner_transform(self) -> Result<Transformed<T, ReadWrite>> {
+        Ok(Transformed {
+            data: self.data.expect("Present data state"),
+            name: self.name.expect("Present name state"),
+            access: self.access,
+        })
     }
-}
 
-pub(crate) trait CreateOutput<T>: Sized
-where
-    T: SharedData,
-{
-    type Output;
-    fn finish(allocation: Allocation<T, Self>) -> Self::Output;
-}
-
-impl<T: SharedData> CreateOutput<T> for ReadWrite {
-    type Output = SharedValue<T>;
-
-    fn finish(allocation: Allocation<T, Self>) -> Self::Output {
-        SharedValue::from(allocation)
-    }
-}
-impl<T: SharedData> CreateOutput<T> for ReadOnly {
-    type Output = Allocation<T, ReadOnly>;
-    fn finish(allocation: Allocation<T, Self>) -> Self::Output {
-        allocation
+    pub fn create(self) -> Result<SharedValue<T, ReadWrite>> {
+        let transformed = self.inner_transform()?;
+        let mut allocation = transformed.inner_create()?;
+        allocation.write_all()?;
+        Ok(SharedValue::from(allocation))
     }
 }
