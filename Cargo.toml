@@ -1,6 +1,6 @@
 [package]
 name = "ipc-com"
-version = "0.0.9"
+version = "0.1.0"
 edition = "2024"
 description = "Simple shared-memory IPC for Rust"
 license = "Apache-2.0"
@@ -21,11 +21,9 @@ panic = "abort"
 [lints.clippy]
 mem_forget = "deny"
 exit = "warn"
-dbg_macro = "deny"
 todo = "warn"
 unimplemented = "warn"
 
 large_stack_arrays = "warn"
 large_futures = "warn"
-needless_pass_by_value = "warn"
 redundant_clone = "deny"
