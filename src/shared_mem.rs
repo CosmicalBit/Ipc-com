@@ -23,7 +23,25 @@ pub enum Error {
     ArithmeticOverflow,
     DuplicatedName(std::io::Error),
     Futex(std::io::Error),
+    OwnerDied,
 }
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::FileDescriptor(error) => write!(f, "shared memory file descriptor: {error}"),
+            Self::Mmap(error) => write!(f, "shared memory mapping: {error}"),
+            Self::Null(error) => write!(f, "invalid shared memory name: {error}"),
+            Self::NullPtr => write!(f, "null shared memory pointer"),
+            Self::TryConversion(error) => write!(f, "integer conversion: {error}"),
+            Self::SliceConversion(error) => write!(f, "slice conversion: {error}"),
+            Self::ArithmeticOverflow => write!(f, "shared memory size overflow"),
+            Self::DuplicatedName(error) => write!(f, "shared memory name already exists: {error}"),
+            Self::Futex(error) => write!(f, "futex operation: {error}"),
+            Self::OwnerDied => write!(f, "shared memory lock owner died"),
+        }
+    }
+}
+impl std::error::Error for Error {}
 impl From<std::num::TryFromIntError> for Error {
     fn from(value: std::num::TryFromIntError) -> Self {
         Error::TryConversion(value)

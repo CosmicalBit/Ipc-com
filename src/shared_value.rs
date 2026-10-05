@@ -1,12 +1,13 @@
 use crate::{
     allocation::{Allocation, ReadOnly, ReadWrite},
-    futex::Futex,
-    shared_mem::{Mapping, Result},
+    futex::{Futex, WaitResult},
+    shared_mem::{Error, Mapping, Result},
 };
 use std::{
     borrow::Cow,
     marker::PhantomData,
-    sync::atomic::{self, AtomicU32, Ordering},
+    sync::atomic::{AtomicU32, Ordering},
+    time::{Duration, Instant},
 };
 
 /// This trait is needed implemented for the data that you wish to share over ipc
@@ -46,12 +47,12 @@ where
     pub fn write(&mut self, data: &T) -> Result<()> {
         let atomic = self.mapping.atomic_ref()?;
 
-        Self::lock(atomic);
+        Self::lock(atomic)?;
 
         let res = self.mapping.write_data(data);
         let new_atomic = self.mapping.atomic_ref()?;
 
-        Self::unlock(new_atomic);
+        let unlock_result = Self::unlock(new_atomic);
 
         if res.is_ok() {
             let generation = self.mapping.atomic_gen()?;
@@ -59,7 +60,7 @@ where
             Futex::new(generation).wake_all()?;
         }
 
-        res
+        res.and(unlock_result)
     }
 }
 
@@ -67,40 +68,75 @@ impl<T, Access> SharedValue<T, Access>
 where
     T: SharedData,
 {
-    fn lock(atomic: &AtomicU32) {
-        loop {
-            let current = atomic.load(std::sync::atomic::Ordering::Relaxed);
+    fn lock(atomic: &AtomicU32) -> Result<()> {
+        Self::lock_with_timeout(atomic, Duration::from_secs(5))
+    }
 
-            if current % 2 != 0 {
-                continue;
+    fn lock_with_timeout(atomic: &AtomicU32, timeout: Duration) -> Result<()> {
+        // The lock word contains the owning process ID, or zero when unlocked.
+        let pid = u32::try_from(unsafe { libc::getpid() })?;
+        let mut observed_owner = 0;
+        let mut last_check = Instant::now();
+        loop {
+            let current = atomic.load(Ordering::Acquire);
+
+            if current != 0 {
+                if current != observed_owner {
+                    observed_owner = current;
+                    last_check = Instant::now();
+                }
+                let futex = Futex::new(atomic);
+
+                match futex.wait_timeout(current, timeout.saturating_sub(last_check.elapsed()))? {
+                    WaitResult::Woken => continue,
+
+                    WaitResult::TimedOut => {
+                        if atomic.load(Ordering::Acquire) == current && !Self::owner_is_alive(current)? && atomic.load(Ordering::Acquire) == current {
+                            return Err(Error::OwnerDied);
+                        }
+                        last_check = Instant::now();
+                        continue;
+                    },
+                }
             }
 
-            if atomic
-                .compare_exchange(current, current.wrapping_add(1), std::sync::atomic::Ordering::Acquire, std::sync::atomic::Ordering::Relaxed)
-                .is_ok()
-            {
-                return;
+            if atomic.compare_exchange(0, pid, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+                return Ok(());
             }
         }
     }
-    fn unlock(atomic: &AtomicU32) {
-        atomic.fetch_add(1, atomic::Ordering::Release);
+    fn owner_is_alive(pid: u32) -> Result<bool> {
+        let pid = libc::pid_t::try_from(pid)?;
+        if unsafe { libc::kill(pid, 0) } == 0 {
+            return Ok(true);
+        }
+        let error = std::io::Error::last_os_error();
+        match error.raw_os_error() {
+            Some(libc::ESRCH) => Ok(false),
+            Some(libc::EPERM) => Ok(true),
+            _ => Err(Error::Futex(error)),
+        }
+    }
+    fn unlock(atomic: &AtomicU32) -> Result<()> {
+        atomic.store(0, Ordering::Release);
+        Futex::new(atomic).wake_all()
     }
     /// Reads the current value, growing this handle's mapping if needed.
     pub fn read(&mut self) -> Result<T> {
         {
             let atomic = self.mapping.atomic_ref()?;
 
-            Self::lock(atomic);
+            Self::lock(atomic)?;
         }
         // Unlock even when reading or decoding fails.
         let result = self.mapping.read_data();
 
         // The lock address may have moved with the mapping.
         let atomic = self.mapping.atomic_ref()?;
-        Self::unlock(atomic);
-
-        result
+        let unlock_result = Self::unlock(atomic);
+        let value = result?;
+        unlock_result?;
+        Ok(value)
     }
 }
 impl<T> SharedValue<T, ReadOnly>
@@ -159,6 +195,35 @@ mod test {
             Ok(String::from_utf8_lossy(bytes).to_string())
         }
     }
+    #[test]
+    fn dead_lock_owner_is_reported() {
+        // Linux PIDs are bounded well below pid_t::MAX.
+        let lock = AtomicU32::new(libc::pid_t::MAX as u32);
+        assert!(matches!(SharedValue::<String, ReadOnly>::lock_with_timeout(&lock, Duration::from_millis(1)), Err(Error::OwnerDied)));
+    }
+
+    #[test]
+    fn unlocking_wakes_waiting_reader() {
+        let lock = AtomicU32::new(0);
+        SharedValue::<String, ReadOnly>::lock(&lock).unwrap();
+
+        std::thread::scope(|scope| {
+            let (started, ready) = std::sync::mpsc::channel();
+            let lock = &lock;
+            let waiter = scope.spawn(move || {
+                started.send(()).unwrap();
+                let start = Instant::now();
+                SharedValue::<String, ReadOnly>::lock_with_timeout(lock, Duration::from_secs(2)).unwrap();
+                assert!(start.elapsed() < Duration::from_secs(1), "unlock did not wake the waiter");
+                SharedValue::<String, ReadOnly>::unlock(lock).unwrap();
+            });
+            ready.recv().unwrap();
+            std::thread::sleep(Duration::from_millis(10));
+            SharedValue::<String, ReadOnly>::unlock(lock).unwrap();
+            waiter.join().unwrap();
+        });
+    }
+
     #[test]
     fn round_trip_same_size() {
         let string = String::from("batata");

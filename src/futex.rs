@@ -1,8 +1,14 @@
 use crate::{Error, Result};
 use std::sync::atomic::AtomicU32;
+use std::time::Duration;
 
 pub(crate) struct Futex<'a> {
     value: &'a AtomicU32,
+}
+
+pub(crate) enum WaitResult {
+    Woken,
+    TimedOut,
 }
 
 impl<'a> Futex<'a> {
@@ -32,6 +38,32 @@ impl<'a> Futex<'a> {
             return Err(Error::Futex(error));
         }
         Ok(())
+    }
+    pub(crate) fn wait_timeout(&self, expected: u32, timeout: Duration) -> Result<WaitResult> {
+        let timeout = libc::timespec {
+            tv_sec: libc::time_t::try_from(timeout.as_secs())?,
+            tv_nsec: timeout.subsec_nanos() as libc::c_long,
+        };
+
+        let ret = unsafe { libc::syscall(libc::SYS_futex, self.value.as_ptr(), libc::FUTEX_WAIT, expected, &timeout) };
+
+        if ret == 0 {
+            return Ok(WaitResult::Woken);
+        }
+
+        let error = std::io::Error::last_os_error();
+
+        match error.raw_os_error() {
+            Some(libc::ETIMEDOUT) => Ok(WaitResult::TimedOut),
+
+            // Value changed before we entered the kernel.
+            Some(libc::EAGAIN) => Ok(WaitResult::Woken),
+
+            // Interrupted by signal; just retry.
+            Some(libc::EINTR) => Ok(WaitResult::Woken),
+
+            _ => Err(Error::Futex(error)),
+        }
     }
 }
 
