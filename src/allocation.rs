@@ -1,7 +1,6 @@
 use crate::shared_mem::Mapping;
 use crate::shared_mem::Result;
 use crate::shared_value::SharedData;
-use crate::user_facing::Transformed;
 use std::sync::atomic::AtomicU32;
 
 pub struct ReadOnly;
@@ -18,18 +17,14 @@ where
     pub(crate) data: T,
     pub(crate) access: Access,
 }
-impl<T, Access> TryFrom<Transformed<T, Access>> for Header<T, Access>
+impl<T, Access> TryFrom<(T, Access)> for Header<T, Access>
 where
     T: crate::shared_value::SharedData,
 {
     type Error = crate::shared_mem::Error;
-    fn try_from(transformed: Transformed<T, Access>) -> Result<Self> {
-        let len = transformed.data.as_bytes()?.len() as u32;
-        Ok(Self {
-            len,
-            data: transformed.data,
-            access: transformed.access,
-        })
+    fn try_from((data, access): (T, Access)) -> Result<Self> {
+        let len = data.as_bytes()?.len() as u32;
+        Ok(Self { len, data, access })
     }
 }
 pub(crate) struct Allocation<T, Access>

@@ -45,7 +45,7 @@ fn main() -> Result<()> {
     let reader = SharedValue::<Counter, ReadOnly>::new_reader(&name)?;
     assert_eq!(reader.read()?, Counter(1));
 
-    owner.write(Counter(2))?;
+    owner.write(&Counter(2))?;
     assert_eq!(reader.read()?, Counter(2));
     Ok(())
 }

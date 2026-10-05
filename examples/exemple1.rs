@@ -40,7 +40,7 @@ fn main() -> Result<()> {
     // A reader can also become a writer. Keep the creator alive so the name
     // remains available while the second handle is open.
     let mut writer = SharedValue::<Moment, ReadOnly>::new_reader(&name)?.to_mut();
-    writer.write(Moment { day: 31 })?;
+    writer.write(&Moment { day: 31 })?;
     assert_eq!(reader.read()?, Moment { day: 31 });
 
     // The blocking wait returns the value written after the wait begins.
@@ -48,7 +48,7 @@ fn main() -> Result<()> {
         let update = scope.spawn(|| {
             let mut writer = SharedValue::<Moment, ReadOnly>::new_reader(&name)?.to_mut();
             std::thread::sleep(Duration::from_millis(50));
-            writer.write(Moment { day: 32 })
+            writer.write(&Moment { day: 32 })
         });
         assert_eq!(reader.wait_for_change_value()?, Moment { day: 32 });
         update.join().expect("writer thread panicked")?;
@@ -59,7 +59,7 @@ fn main() -> Result<()> {
     // before joining it to get the updated value.
     let pending = reader.wait_for_change_async::<()>()?;
     std::thread::sleep(Duration::from_millis(50));
-    creator.write(Moment { day: 33 })?;
+    creator.write(&Moment { day: 33 })?;
     assert_eq!(pending.join().expect("wait thread panicked")?, Moment { day: 33 });
 
     println!("Latest day read from shared memory: {}", reader.read()?.day);

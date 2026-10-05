@@ -149,7 +149,7 @@ impl Mapping {
         Ok(data)
     }
 
-    pub(crate) fn write_data<T>(&mut self, data: T, _atomic: AtomicU32) -> Result<()>
+    pub(crate) fn write_data<T>(&mut self, data: &T, _atomic: AtomicU32) -> Result<()>
     where
         T: SharedData,
     {

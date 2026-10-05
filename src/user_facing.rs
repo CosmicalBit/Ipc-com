@@ -29,8 +29,8 @@ where
     T: SharedData,
 {
     pub(crate) fn inner_create(self) -> Result<Allocation<T, Access>> {
-        let name = self.name.clone();
-        let header = Header::try_from(self)?;
+        let Transformed { data, name, access } = self;
+        let header = Header::try_from((data, access))?;
         Allocation::allocate_space(&name, header)
     }
 }

@@ -44,7 +44,7 @@ impl<T> SharedValue<T, ReadWrite>
 where
     T: SharedData,
 {
-    pub fn write(&mut self, data: T) -> Result<()> {
+    pub fn write(&mut self, data: &T) -> Result<()> {
         let atomic = self.mapping.atomic_ref()?;
 
         Self::lock(atomic);
@@ -189,7 +189,7 @@ mod test {
         let to_write = String::from("dkkkkkkkkkkkkkkkslfjlsdkjflsdkjflskdjfkdsljflsdjfi f8 ");
         let mut mem = SharedMemoryOptions::new().to_mutable().name(&name).with_data(string).create().unwrap();
 
-        mem.write(to_write.clone()).unwrap();
+        mem.write(&to_write).unwrap();
         let red = mem.read().unwrap();
 
         assert!(red == to_write);
@@ -226,7 +226,7 @@ mod test {
             scope.spawn(|| {
                 let mut writer = SharedValue::<String, ReadOnly>::new_reader(&name).unwrap().to_mut();
                 std::thread::sleep(Duration::from_millis(50));
-                writer.write(String::from("after")).unwrap();
+                writer.write(&String::from("after")).unwrap();
             });
 
             assert_eq!(reader.wait_for_change_value().unwrap(), "after");
@@ -241,7 +241,7 @@ mod test {
 
         let waiting = reader.wait_for_change_async::<()>().unwrap();
         std::thread::sleep(Duration::from_millis(50));
-        owner.write(String::from("after")).unwrap();
+        owner.write(&String::from("after")).unwrap();
 
         assert_eq!(waiting.join().unwrap().unwrap(), "after");
     }
@@ -299,7 +299,7 @@ mod test {
 
                 for i in 0..ITERATIONS {
                     writer
-                        .write(TestData {
+                        .write(&TestData {
                             name: (i as u32).to_be_bytes(),
                             year: i,
                         })
