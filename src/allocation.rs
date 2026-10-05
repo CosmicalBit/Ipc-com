@@ -1,67 +1,29 @@
-use crate::shared_mem::Mapping;
-use crate::shared_mem::Result;
-use crate::shared_value::SharedData;
+use crate::shared_mem::{Error, Mapping, Result};
+use std::marker::PhantomData;
 use std::sync::atomic::AtomicU32;
-
 pub struct ReadOnly;
 pub struct ReadWrite;
 
 pub(crate) const HEADER_SIZE: usize = size_of::<AtomicU32>() + size_of::<u32>() + size_of::<AtomicU32>();
 
-#[repr(C)]
-pub(crate) struct Header<T, Access>
-where
-    T: crate::shared_value::SharedData,
-{
-    pub(crate) len: u32,
-    pub(crate) data: T,
-    pub(crate) access: Access,
-}
-impl<T, Access> TryFrom<(T, Access)> for Header<T, Access>
-where
-    T: crate::shared_value::SharedData,
-{
-    type Error = crate::shared_mem::Error;
-    fn try_from((data, access): (T, Access)) -> Result<Self> {
-        let len = data.as_bytes()?.len() as u32;
-        Ok(Self { len, data, access })
-    }
-}
-pub(crate) struct Allocation<T, Access>
-where
-    T: crate::shared_value::SharedData,
-{
+pub(crate) struct Allocation<Access> {
     pub(crate) mapping: Mapping,
-    pub(crate) header: Header<T, Access>,
+    pub(crate) phantom: PhantomData<Access>,
 }
-impl<T, Access> Allocation<T, Access>
-where
-    T: crate::shared_value::SharedData,
-{
-    pub(crate) fn allocate_space(name: &str, header: Header<T, Access>) -> Result<Allocation<T, Access>> {
-        let size = header.total_size_to_alloc()?;
+impl<Access> Allocation<Access> {
+    pub(crate) fn allocate_space(name: &str, data: &[u8]) -> Result<Allocation<Access>> {
+        u32::try_from(data.len())?;
+        let size = HEADER_SIZE.checked_add(data.len()).ok_or(Error::ArithmeticOverflow)?;
         let mapping = Mapping::init_shared_memory(name, size)?;
-        Ok(Allocation::<T, Access> { mapping, header })
+        Ok(Allocation::<Access> { mapping, phantom: PhantomData })
     }
 
-    pub(crate) fn write_all(&mut self) -> Result<()> {
+    pub(crate) fn write_all(&mut self, data: &[u8]) -> Result<()> {
+        let len = u32::try_from(data.len())?;
         let offset = unsafe { self.mapping.write_concrete_type(AtomicU32::new(0), 0) };
         let offset = unsafe { self.mapping.write_concrete_type(AtomicU32::new(0), offset) };
-        let offset = unsafe { self.mapping.write_bytes(&self.header.len_bytes(), offset) };
-        unsafe { self.mapping.write_bytes(&self.header.data.as_bytes()?, offset) };
+        let offset = unsafe { self.mapping.write_bytes(&len.to_be_bytes(), offset) };
+        unsafe { self.mapping.write_bytes(data, offset) };
         Ok(())
-    }
-}
-
-impl<T, Access> Header<T, Access>
-where
-    T: SharedData,
-{
-    pub(crate) fn total_size_to_alloc(&self) -> Result<usize> {
-        let data_len = self.data.as_bytes()?.len();
-        Ok(HEADER_SIZE + data_len)
-    }
-    pub(crate) fn len_bytes(&self) -> [u8; 4] {
-        self.len.to_be_bytes()
     }
 }

@@ -14,7 +14,7 @@ Define how your type is encoded, create a value, and connect a second handle:
 
 ```rust
 use std::borrow::Cow;
-use ipc_com::{Error, ReadOnly, Result, SharedData, SharedMemoryOptions, SharedValue};
+use ipc_com::{ReadOnly, Result, SharedData, SharedMemoryOptions, SharedValue};
 
 #[derive(Debug, PartialEq, Eq)]
 struct Counter(u64);
@@ -25,7 +25,7 @@ impl SharedData for Counter {
     }
 
     fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        let bytes: [u8; 8] = bytes.try_into().map_err(|_| Error::TryConversion)?;
+        let bytes: [u8; 8] = bytes.try_into()?;
         Ok(Self(u64::from_be_bytes(bytes)))
     }
 }

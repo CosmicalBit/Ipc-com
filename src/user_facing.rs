@@ -1,4 +1,4 @@
-use crate::allocation::{Allocation, Header, ReadOnly, ReadWrite};
+use crate::allocation::{Allocation, ReadOnly, ReadWrite};
 use crate::shared_mem::Result;
 use crate::shared_value::{SharedData, SharedValue};
 use std::marker::PhantomData;
@@ -21,17 +21,19 @@ where
 {
     pub(crate) data: T,
     pub(crate) name: String,
-    pub(crate) access: Access,
+    _access: PhantomData<Access>,
 }
 
 impl<T, Access> Transformed<T, Access>
 where
     T: SharedData,
 {
-    pub(crate) fn inner_create(self) -> Result<Allocation<T, Access>> {
-        let Transformed { data, name, access } = self;
-        let header = Header::try_from((data, access))?;
-        Allocation::allocate_space(&name, header)
+    pub(crate) fn inner_create(self) -> Result<SharedValue<T, Access>> {
+        let Transformed { data, name, .. } = self;
+        let data = data.as_bytes()?;
+        let mut allocation = Allocation::allocate_space(&name, &data)?;
+        allocation.write_all(&data)?;
+        Ok(SharedValue::from(allocation))
     }
 }
 
@@ -109,15 +111,12 @@ where
         Ok(Transformed {
             data: self.data.expect("Present data state"),
             name: self.name.expect("Present name state"),
-            access: self.access,
+            _access: PhantomData,
         })
     }
     /// Creates a read-only shared value with the configured name and data.
     pub fn create(self) -> Result<SharedValue<T, ReadOnly>> {
-        let transformed = self.inner_transform()?;
-        let mut allocation = transformed.inner_create()?;
-        allocation.write_all()?;
-        Ok(SharedValue::from(allocation))
+        self.inner_transform()?.inner_create()
     }
 }
 
@@ -129,15 +128,12 @@ where
         Ok(Transformed {
             data: self.data.expect("Present data state"),
             name: self.name.expect("Present name state"),
-            access: self.access,
+            _access: PhantomData,
         })
     }
 
     /// Creates a writable shared value with the configured name and data.
     pub fn create(self) -> Result<SharedValue<T, ReadWrite>> {
-        let transformed = self.inner_transform()?;
-        let mut allocation = transformed.inner_create()?;
-        allocation.write_all()?;
-        Ok(SharedValue::from(allocation))
+        self.inner_transform()?.inner_create()
     }
 }

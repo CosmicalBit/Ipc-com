@@ -5,7 +5,7 @@
 use std::borrow::Cow;
 use std::time::Duration;
 
-use ipc_com::{Error, ReadOnly, Result, SharedData, SharedMemoryOptions, SharedValue};
+use ipc_com::{ReadOnly, Result, SharedData, SharedMemoryOptions, SharedValue};
 
 #[derive(Debug, PartialEq, Eq)]
 struct Moment {
@@ -20,7 +20,7 @@ impl SharedData for Moment {
     }
 
     fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        let day_bytes: [u8; 2] = bytes.try_into().map_err(|_| Error::TryConversion)?;
+        let day_bytes: [u8; 2] = bytes.try_into()?;
         Ok(Self { day: u16::from_be_bytes(day_bytes) })
     }
 }

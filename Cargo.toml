@@ -1,6 +1,6 @@
 [package]
 name = "ipc-com"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2024"
 description = "Simple shared-memory IPC for Rust"
 license = "Apache-2.0"
@@ -12,7 +12,7 @@ rust-version = "1.85"
 [dependencies]
 libc = "0.2.189"
 
-[profile.release]
+[profile.release]  
 opt-level = 3
 lto = "fat"
 strip = "symbols"

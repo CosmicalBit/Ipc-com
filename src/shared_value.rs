@@ -28,11 +28,11 @@ where
     _phantom: PhantomData<(Access, T)>,
 }
 
-impl<T, Access> From<Allocation<T, Access>> for SharedValue<T, Access>
+impl<T, Access> From<Allocation<Access>> for SharedValue<T, Access>
 where
     T: SharedData,
 {
-    fn from(value: Allocation<T, Access>) -> Self {
+    fn from(value: Allocation<Access>) -> Self {
         Self {
             mapping: value.mapping,
             _phantom: PhantomData,
@@ -138,7 +138,7 @@ where
         let name = self.mapping.name().to_owned();
 
         Ok(std::thread::spawn(move || -> Result<T> {
-            let mut value: SharedValue<T, ReadOnly> = SharedValue::new_reader(&name)?;
+            let mut value: SharedValue<T, ReadOnly> = SharedValue::new_reader(name.to_str().expect("error convertingto str"))?;
             value.wait_for_change_value()
         }))
     }
