@@ -5,7 +5,6 @@ use crate::{
 };
 use std::{
     borrow::Cow,
-    fmt::format,
     marker::PhantomData,
     sync::atomic::{self, AtomicU32, Ordering},
 };
@@ -71,7 +70,7 @@ where
         loop {
             let current = atomic.load(std::sync::atomic::Ordering::Relaxed);
 
-            if !current.is_multiple_of(2) {
+            if current % 2 != 0 {
                 continue;
             }
 

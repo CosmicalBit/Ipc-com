@@ -52,6 +52,15 @@ where
     }
 }
 
+impl<T> Default for SharedMemoryOptions<T, ReadOnly, Missing, Missing>
+where
+    T: SharedData,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T, Access, DataState, NameState> SharedMemoryOptions<T, Access, DataState, NameState>
 where
     T: SharedData,

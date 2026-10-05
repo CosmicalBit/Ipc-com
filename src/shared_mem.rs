@@ -1,6 +1,5 @@
 use libc::{MREMAP_MAYMOVE, shm_unlink};
 use std::ffi::NulError;
-use std::intrinsics::copy_nonoverlapping;
 use std::mem::MaybeUninit;
 use std::os::raw::c_void;
 use std::ptr;
@@ -32,7 +31,6 @@ impl From<NulError> for Error {
 
 pub(crate) struct Mapping {
     start: NonNull<u8>,
-    ptr: NonNull<u8>,
     size: usize,
     fd: i32,
     owner: bool,
@@ -47,7 +45,6 @@ impl Mapping {
     fn new(mut_ptr: *mut u8, size: usize, fd: i32, name: &str, owner: bool) -> Result<Self> {
         Ok(Mapping {
             start: NonNull::new(mut_ptr).ok_or(Error::NullPtr)?,
-            ptr: NonNull::new(mut_ptr).ok_or(Error::NullPtr)?,
             size,
             fd,
             name: name.to_string(),
@@ -102,7 +99,7 @@ impl Mapping {
         Ok(())
     }
     ///# Safety
-    /// `self.ptr` must be:
+    /// `self.start` must be:
     /// pointed to a valid place
     /// aligned for `T`
     /// have size_of::<T>() available
@@ -112,7 +109,7 @@ impl Mapping {
         assert!(end <= self.size, "write exceeded mapping");
 
         let ptr = unsafe { self.start.add(offset).as_ptr() };
-        unsafe { copy_nonoverlapping(data.as_ptr(), ptr, data.len()) };
+        unsafe { ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len()) };
         offset + data.len()
     }
     //returns the offset where the ptr was left of
@@ -209,10 +206,6 @@ impl Mapping {
         Ok(mem)
     }
 }
-pub(crate) fn aligned_offset<T>(offset: usize) -> usize {
-    offset.next_multiple_of(align_of::<T>())
-}
-
 impl Drop for Mapping {
     #[inline]
     fn drop(&mut self) {
