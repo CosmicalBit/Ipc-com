@@ -2,7 +2,7 @@
 
 Shared-memory Inter Process Communication for Rust on Linux. Create a named value in one process, then open it by name in another. Values are encoded as bytes through the `SharedData` trait.
 
-This crate is at version `0.1.0`. Its API and shared-memory format may change.
+This crate is at version `0.1.2`. Its API and shared-memory format may change.
 
 ## Quick start
 
@@ -55,4 +55,7 @@ The example opens both handles in one process. For IPC, create the value in one 
 
 For a value that does not need updates, omit `.to_mutable()`. The resulting handle can still call `read()`, but does not expose `write()`.
 
-The repository also includes a [smaller example](examples/exemple1.rs), runnable with `cargo run --example exemple1`.
+To wait for an update, call `reader.wait_for_change_value()?` or use
+`reader.wait_for_change_async::<()>()?` and join the returned thread handle.
+An existing reader can be turned into a writer with `reader.to_mut()`.
+See the [complete example](examples/exemple1.rs), runnable with `cargo run --example exemple1`.
