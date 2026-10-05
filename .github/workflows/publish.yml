@@ -1,0 +1,66 @@
+name: Publish
+
+on:
+  push:
+    branches: [main]
+    paths: [Cargo.toml]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: crates-io-publish
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check crates.io version
+        id: version
+        shell: bash
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
+          echo "number=$version" >> "$GITHUB_OUTPUT"
+          status=$(curl --silent --show-error --location --output /dev/null --write-out '%{http_code}' "https://crates.io/api/v1/crates/ipc-com/$version")
+          case "$status" in
+            200) echo "publish=false" >> "$GITHUB_OUTPUT" ;;
+            404) echo "publish=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "crates.io returned HTTP $status" >&2; exit 1 ;;
+          esac
+
+      - name: Install Rust components
+        if: steps.version.outputs.publish == 'true'
+        run: rustup component add clippy rustfmt
+
+      - name: Check formatting
+        if: steps.version.outputs.publish == 'true'
+        run: cargo fmt --check
+
+      - name: Run Clippy
+        if: steps.version.outputs.publish == 'true'
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Run tests
+        if: steps.version.outputs.publish == 'true'
+        run: cargo test --all-targets
+
+      - name: Check lockfile is committed
+        if: steps.version.outputs.publish == 'true'
+        run: git diff --exit-code -- Cargo.lock
+
+      - name: Authenticate with crates.io
+        if: steps.version.outputs.publish == 'true'
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish to crates.io
+        if: steps.version.outputs.publish == 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: cargo publish
