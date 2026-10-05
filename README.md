@@ -56,13 +56,3 @@ The example opens both handles in one process. For IPC, create the value in one 
 For a value that does not need updates, omit `.to_mutable()`. The resulting handle can still call `read()`, but does not expose `write()`.
 
 The repository also includes a [smaller example](examples/exemple1.rs), runnable with `cargo run --example exemple1`.
-
-## Current limitations
-
-- Linux only: the implementation uses POSIX shared-memory functions and Linux `mremap`.
-- Choose a unique name for each independent value. Creating another value with an existing name can truncate and overwrite that shared-memory object.
-- Keep the creator alive while other processes need to connect. Dropping any handle unlinks the name, so new readers may no longer be able to open it.
-- A write that grows the value remaps the writer's handle, but does not remap existing reader handles. Keep the encoded size fixed when other handles are attached.
-- `ReadOnly` restricts the Rust API; it is not an operating-system permission boundary. A reader can be converted to a writable handle with `to_mut()`.
-
-Run the tests with `cargo test`.
