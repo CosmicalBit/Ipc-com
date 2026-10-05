@@ -139,7 +139,8 @@ where
         }))
     }
 }
-#[cfg(test)]
+// These integration tests require POSIX shared memory, which Miri cannot emulate.
+#[cfg(all(test, not(miri)))]
 mod test {
     use crate::user_facing::SharedMemoryOptions;
     use std::time::Duration;
