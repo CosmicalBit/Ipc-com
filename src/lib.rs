@@ -1,4 +1,5 @@
 mod allocation;
+mod futex;
 mod shared_mem;
 mod shared_value;
 mod user_facing;

@@ -5,7 +5,7 @@ use std::mem::MaybeUninit;
 use std::os::raw::c_void;
 use std::ptr;
 use std::ptr::NonNull;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::AtomicU32;
 use std::{ffi::CString, str::FromStr};
 
 use crate::allocation::HEADER_SIZE;
@@ -13,13 +13,14 @@ use crate::shared_value::SharedData;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum Error {
     FileDescriptor,
     Mmap,
     Null(NulError),
     NullPtr,
     TryConversion,
+    Os(std::io::Error),
 }
 
 impl From<NulError> for Error {
@@ -38,6 +39,9 @@ pub(crate) struct Mapping {
 //TODO add a show header funciton
 
 impl Mapping {
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
     fn new(mut_ptr: *mut u8, size: usize, fd: i32, name: &str) -> Result<Self> {
         Ok(Mapping {
             start: NonNull::new(mut_ptr).ok_or(Error::NullPtr)?,
@@ -127,29 +131,29 @@ impl Mapping {
         let ptr = unsafe { self.start.add(offset).as_ptr() };
         unsafe { std::slice::from_raw_parts(ptr, ammount) }
     }
-    pub(crate) fn atomic_ref(&self) -> Result<&AtomicU64> {
-        unsafe { self.start.as_ptr().cast::<AtomicU64>().as_ref().ok_or(Error::NullPtr) }
+    pub(crate) fn atomic_ref(&self) -> Result<&AtomicU32> {
+        unsafe { self.start.as_ptr().cast::<AtomicU32>().as_ref().ok_or(Error::NullPtr) }
     }
     pub(crate) fn read_data<T>(&self) -> Result<T>
     where
         T: SharedData,
     {
-        let bytes: [u8; 4] = unsafe { self.read_bytes(size_of::<u32>(), size_of::<AtomicU64>()).try_into().unwrap() };
+        let bytes: [u8; 4] = unsafe { self.read_bytes(size_of::<u32>(), size_of::<AtomicU32>()).try_into().unwrap() };
         let len = u32::from_be_bytes(bytes) as usize;
-        let bytes = unsafe { self.read_bytes(len, size_of::<AtomicU64>() + size_of::<u32>()) };
+        let bytes = unsafe { self.read_bytes(len, size_of::<AtomicU32>() + size_of::<u32>()) };
 
         let data = T::from_bytes(bytes).map_err(|_| Error::TryConversion)?;
         Ok(data)
     }
 
-    pub(crate) fn write_data<T>(&mut self, data: T, _atomic: AtomicU64) -> Result<()>
+    pub(crate) fn write_data<T>(&mut self, data: T, _atomic: AtomicU32) -> Result<()>
     where
         T: SharedData,
     {
-        let bytes: [u8; 4] = unsafe { self.read_bytes(size_of::<u32>(), size_of::<AtomicU64>()).try_into().unwrap() };
+        let bytes: [u8; 4] = unsafe { self.read_bytes(size_of::<u32>(), size_of::<AtomicU32>()).try_into().unwrap() };
         let _len = u32::from_be_bytes(bytes) as usize;
 
-        let offset = size_of::<AtomicU64>() + size_of::<u32>();
+        let offset = size_of::<AtomicU32>() + size_of::<u32>();
 
         let bytes = data.as_bytes()?;
 
@@ -162,7 +166,7 @@ impl Mapping {
         let new_len = bytes.len() as u32;
 
         unsafe {
-            self.write_bytes(&new_len.to_be_bytes(), size_of::<AtomicU64>());
+            self.write_bytes(&new_len.to_be_bytes(), size_of::<AtomicU32>());
             self.write_bytes(&bytes, offset);
         };
 

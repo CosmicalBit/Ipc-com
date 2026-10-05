@@ -1,12 +1,13 @@
 use crate::{
     allocation::{Allocation, ReadOnly, ReadWrite},
+    futex::Futex,
     shared_mem::{Mapping, Result},
 };
 use std::{
     borrow::Cow,
     fmt::format,
     marker::PhantomData,
-    sync::atomic::{self, AtomicU64, Ordering},
+    sync::atomic::{self, AtomicU32, Ordering},
 };
 
 /// This trait is needed implemented for the data that you wish to share over ipc
@@ -48,11 +49,15 @@ where
 
         Self::lock(atomic);
 
-        let atomic = AtomicU64::new(atomic.load(Ordering::Relaxed));
+        let atomic = AtomicU32::new(atomic.load(Ordering::Relaxed));
         let res = self.mapping.write_data(data, atomic);
-
         let new_atomic = self.mapping.atomic_ref()?;
+
         Self::unlock(new_atomic);
+
+        //wake anyone waiting on change
+        let futex = Futex::new(new_atomic);
+        futex.wake_all()?;
 
         res
     }
@@ -62,7 +67,7 @@ impl<T, Access> SharedValue<T, Access>
 where
     T: SharedData,
 {
-    fn lock(atomic: &AtomicU64) {
+    fn lock(atomic: &AtomicU32) {
         loop {
             let current = atomic.load(std::sync::atomic::Ordering::Relaxed);
 
@@ -78,7 +83,7 @@ where
             }
         }
     }
-    fn unlock(atomic: &AtomicU64) {
+    fn unlock(atomic: &AtomicU32) {
         atomic.fetch_add(1, atomic::Ordering::Release);
     }
     pub fn read(&self) -> Result<T> {
@@ -123,9 +128,37 @@ where
     }
 }
 
+impl<T, Access> SharedValue<T, Access>
+where
+    T: SharedData,
+{
+    ///this fucntion waits for a change (blocking) and returns the current value
+    pub fn wait_for_change_value(&self) -> Result<T> {
+        let atomic = self.mapping.atomic_ref()?;
+        let cpy = atomic.load(Ordering::Relaxed);
+
+        let futex = Futex::new(atomic);
+        futex.wait(cpy)?;
+
+        self.read()
+    }
+    ///waits  for a change nonblockin for a change nonblocking
+    pub fn wait_for_change_async<F>(&self) -> Result<std::thread::JoinHandle<Result<T>>>
+    where
+        T: Send + 'static,
+    {
+        let name = self.mapping.name().to_owned();
+
+        Ok(std::thread::spawn(move || -> Result<T> {
+            let value: SharedValue<T, ReadOnly> = SharedValue::new_reader(&name)?;
+            value.wait_for_change_value()
+        }))
+    }
+}
 #[cfg(test)]
 mod test {
     use crate::user_facing::SharedMemoryOptions;
+    use std::time::Duration;
 
     use super::*;
 
@@ -181,6 +214,36 @@ mod test {
 
         assert_eq!(owner.read().unwrap(), value);
         assert_eq!(reader.read().unwrap(), value);
+    }
+
+    #[test]
+    fn blocking_wait_returns_updated_value() {
+        let name = format!("ipc_com_blocking_wait_{}", std::process::id());
+        let _owner = SharedMemoryOptions::new().to_mutable().name(&name).with_data(String::from("before")).create().unwrap();
+        let reader = SharedValue::<String, ReadOnly>::new_reader(&name).unwrap();
+
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let mut writer = SharedValue::<String, ReadOnly>::new_reader(&name).unwrap().to_mut();
+                std::thread::sleep(Duration::from_millis(50));
+                writer.write(String::from("after")).unwrap();
+            });
+
+            assert_eq!(reader.wait_for_change_value().unwrap(), "after");
+        });
+    }
+
+    #[test]
+    fn async_wait_returns_updated_value() {
+        let name = format!("ipc_com_async_wait_{}", std::process::id());
+        let mut owner = SharedMemoryOptions::new().to_mutable().name(&name).with_data(String::from("before")).create().unwrap();
+        let reader = SharedValue::<String, ReadOnly>::new_reader(&name).unwrap();
+
+        let waiting = reader.wait_for_change_async::<()>().unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        owner.write(String::from("after")).unwrap();
+
+        assert_eq!(waiting.join().unwrap().unwrap(), "after");
     }
     struct TestData {
         name: [u8; 4],
