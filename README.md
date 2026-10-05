@@ -1,8 +1,6 @@
 # ipc-com
 
-Shared-memory Inter Process Communication for Rust on Linux. Create a named value in one process, then open it by name in another. Values are encoded as bytes through the `SharedData` trait.
-
-This crate is at version `0.1.2`. Its API and shared-memory format may change.
+Simple shared-memory interprocess communication for Rust on Linux. Create a named value in one process and open it by name in another. Implement `SharedData` to define how values are encoded as bytes.
 
 ## Quick start
 
