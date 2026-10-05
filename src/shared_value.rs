@@ -133,8 +133,9 @@ mod test {
     #[test]
     fn round_trip_same_size() {
         let string = String::from("batata");
+        let name = format!("/ipc_com_same_size_{}", std::process::id());
 
-        let mem = SharedMemoryOptions::new().to_mutable().name("nana").with_data(string.clone()).create().unwrap();
+        let mem = SharedMemoryOptions::new().to_mutable().name(&name).with_data(string.clone()).create().unwrap();
         let red = mem.read().unwrap();
 
         assert!(red == string);
@@ -143,9 +144,10 @@ mod test {
     #[test]
     fn round_trip_realloc() {
         let string = String::from("b");
+        let name = format!("/ipc_com_realloc_{}", std::process::id());
 
         let to_write = String::from("dkkkkkkkkkkkkkkkslfjlsdkjflsdkjflskdjfkdsljflsdjfi f8 ");
-        let mut mem = SharedMemoryOptions::new().to_mutable().name("nana").with_data(string).create().unwrap();
+        let mut mem = SharedMemoryOptions::new().to_mutable().name(&name).with_data(string).create().unwrap();
 
         mem.write(to_write.clone()).unwrap();
         let red = mem.read().unwrap();
@@ -165,12 +167,75 @@ mod test {
     #[test]
     fn reader_connects_to_mutable_value() {
         let name = format!("ipc_com_reader_{}", std::process::id());
-        let value = String::from("shared data");
+        let value = String::from("shajred data");
 
         let owner = SharedMemoryOptions::new().to_mutable().name(&name).with_data(value.clone()).create().unwrap();
         let reader = SharedValue::<String, ReadOnly>::new_reader(&name).unwrap();
 
         assert_eq!(owner.read().unwrap(), value);
         assert_eq!(reader.read().unwrap(), value);
+    }
+    struct TestData {
+        name: [u8; 4],
+        year: u16,
+    }
+    impl SharedData for TestData {
+        fn as_bytes(&self) -> Result<Cow<'_, [u8]>> {
+            let mut vec = Vec::new();
+            vec.extend_from_slice(&self.name);
+            vec.extend_from_slice(&self.year.to_be_bytes());
+            Ok(Cow::Owned(vec))
+        }
+
+        fn from_bytes(bytes: &[u8]) -> Result<Self> {
+            let name: [u8; 4] = bytes[0..4].try_into().unwrap();
+            let year = u16::from_be_bytes(bytes[4..6].try_into().unwrap());
+
+            Ok(Self { name, year })
+        }
+    }
+    #[test]
+    fn concurrent_read_write() {
+        use std::thread;
+
+        const ITERATIONS: u16 = 10_000;
+        const READERS: usize = 8;
+
+        let name = format!("/ipc_race_{}", std::process::id());
+
+        let initial = TestData { name: 0u32.to_be_bytes(), year: 0 };
+
+        // Only create the shared memory here.
+        let _owner = SharedMemoryOptions::new().to_mutable().name(&name).with_data(initial).create().unwrap();
+
+        thread::scope(|scope| {
+            for _ in 0..READERS {
+                let name = &name;
+
+                scope.spawn(move || {
+                    let reader = SharedValue::<TestData, ReadOnly>::new_reader(name).unwrap();
+
+                    for _ in 0..ITERATIONS {
+                        let value = reader.read().unwrap();
+                        let number = u32::from_be_bytes(value.name);
+
+                        assert_eq!(value.year, number as u16, "torn read: name encoded {number}, year was {}", value.year);
+                    }
+                });
+            }
+
+            scope.spawn(|| {
+                let mut writer = SharedValue::<TestData, ReadOnly>::new_reader(&name).unwrap().to_mut();
+
+                for i in 0..ITERATIONS {
+                    writer
+                        .write(TestData {
+                            name: (i as u32).to_be_bytes(),
+                            year: i,
+                        })
+                        .unwrap();
+                }
+            });
+        });
     }
 }

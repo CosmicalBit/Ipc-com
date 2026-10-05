@@ -2,6 +2,12 @@
 name = "ipc-com"
 version = "0.1.0"
 edition = "2024"
+description = "Simple shared-memory IPC for Rust"
+license = "Apache-2.0"
+repository = "https://github.com/CosmicalBit/Ipc-com"
+keywords = ["ipc", "shared-memory", "inter-process-communication"]
+categories = ["os", "concurrency"]
+rust-version = "1.85"
 
 [dependencies]
 libc = "0.2.189"
