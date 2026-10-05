@@ -9,7 +9,12 @@ use std::{
     sync::atomic::{self, AtomicU64, Ordering},
 };
 
-/// A value that can be serialized to and reconstructed from shared memory.
+/// This trait is needed implemented for the data that you wish to share over ipc
+///
+/// Note: if by any chance you type has variable sized fields or its variable size like String or
+/// other types in the [`SharedData::as_bytes()`] and [`SharedData::from_bytes()`] dont forget to
+/// store fields with a fixed size indecating the size of the variable payload so they can be
+/// written and read correctly
 pub trait SharedData: Sized {
     fn as_bytes(&self) -> Result<Cow<'_, [u8]>>;
     fn from_bytes(bytes: &[u8]) -> Result<Self>;
