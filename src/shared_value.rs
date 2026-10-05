@@ -4,6 +4,7 @@ use crate::{
 };
 use std::{
     borrow::Cow,
+    fmt::format,
     marker::PhantomData,
     sync::atomic::{self, AtomicU64, Ordering},
 };
@@ -108,9 +109,10 @@ impl<T> SharedValue<T, ReadOnly>
 where
     T: SharedData,
 {
-    ///user_facing: function for reading IPC data
+    ///user_facing: function for reading IPC data from the `name`
     pub fn new_reader(name: &str) -> Result<Self> {
-        let mapping = Mapping::new_connect(name)?;
+        let name = if name.starts_with('/') { name.to_owned() } else { format!("/{name}") };
+        let mapping = Mapping::new_connect(&name)?;
 
         Ok(Self { mapping, _phantom: PhantomData })
     }
