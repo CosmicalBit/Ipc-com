@@ -45,7 +45,7 @@ where
 {
     pub(crate) fn allocate_space(name: &str, header: Header<T, Access>) -> Result<Allocation<T, Access>> {
         let size = header.total_size_to_alloc()?;
-        let mapping = Mapping::init_shared_mem(name, size)?;
+        let mapping = Mapping::init_shared_memory(name, size)?;
         Ok(Allocation::<T, Access> { mapping, header })
     }
 

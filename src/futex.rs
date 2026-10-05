@@ -15,7 +15,7 @@ impl<'a> Futex<'a> {
 
         if ret == -1 {
             let error = std::io::Error::last_os_error();
-            return Err(Error::Os(error));
+            return Err(Error::Futex(error));
         }
         Ok(())
     }
@@ -24,7 +24,7 @@ impl<'a> Futex<'a> {
         let ret = unsafe { libc::syscall(libc::SYS_futex, self.value as *const AtomicU32, libc::FUTEX_WAKE, i32::MAX) };
         if ret == -1 {
             let error = std::io::Error::last_os_error();
-            return Err(Error::Os(error));
+            return Err(Error::Futex(error));
         }
         Ok(())
     }

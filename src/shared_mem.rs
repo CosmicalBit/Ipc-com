@@ -20,7 +20,8 @@ pub enum Error {
     Null(NulError),
     NullPtr,
     TryConversion,
-    Os(std::io::Error),
+    DuplicatedName(std::io::Error),
+    Futex(std::io::Error),
 }
 
 impl From<NulError> for Error {
@@ -34,6 +35,7 @@ pub(crate) struct Mapping {
     ptr: NonNull<u8>,
     size: usize,
     fd: i32,
+    owner: bool,
     name: String,
 }
 //TODO add a show header funciton
@@ -42,13 +44,14 @@ impl Mapping {
     pub(crate) fn name(&self) -> &str {
         &self.name
     }
-    fn new(mut_ptr: *mut u8, size: usize, fd: i32, name: &str) -> Result<Self> {
+    fn new(mut_ptr: *mut u8, size: usize, fd: i32, name: &str, owner: bool) -> Result<Self> {
         Ok(Mapping {
             start: NonNull::new(mut_ptr).ok_or(Error::NullPtr)?,
             ptr: NonNull::new(mut_ptr).ok_or(Error::NullPtr)?,
             size,
             fd,
             name: name.to_string(),
+            owner,
         })
     }
     pub(crate) fn new_connect(name: &str) -> Result<Self> {
@@ -77,7 +80,7 @@ impl Mapping {
             return Err(Error::Mmap);
         }
 
-        Self::new(ptr.cast(), size, fd, name.to_str().unwrap())
+        Self::new(ptr.cast(), size, fd, name.to_str().unwrap(), false)
     }
 
     pub(crate) fn remap(&mut self, new_len: usize) -> Result<()> {
@@ -172,13 +175,17 @@ impl Mapping {
 
         Ok(())
     }
-    pub(crate) fn init_shared_mem(name: &str, size: usize) -> Result<Mapping> {
+    pub(crate) fn init_shared_memory(name: &str, size: usize) -> Result<Mapping> {
         let mem = unsafe {
             let name = CString::from_str(name)?;
 
-            let fd = libc::shm_open(name.as_ptr(), libc::O_CREAT | libc::O_RDWR, 0o600);
+            let fd = libc::shm_open(name.as_ptr(), libc::O_CREAT | libc::O_RDWR | libc::O_EXCL, 0o600);
 
             if fd < 0 {
+                let error = std::io::Error::last_os_error();
+                if error.raw_os_error() == Some(libc::EEXIST) {
+                    return Err(Error::DuplicatedName(error));
+                }
                 return Err(Error::FileDescriptor);
             }
 
@@ -196,7 +203,7 @@ impl Mapping {
 
             let bytes = ptr.cast::<u8>();
 
-            Mapping::new(bytes, size, fd, &name.to_string_lossy())?
+            Mapping::new(bytes, size, fd, &name.to_string_lossy(), true)?
         };
 
         Ok(mem)
@@ -210,11 +217,14 @@ impl Drop for Mapping {
     #[inline]
     fn drop(&mut self) {
         unsafe {
-            let name = CString::new(self.name.as_str()).expect("impossible cstring conversion");
             let ptr = self.start.as_ptr() as *mut c_void;
             libc::munmap(ptr, self.size);
             libc::close(self.fd);
-            shm_unlink(name.as_ptr());
+
+            if self.owner {
+                let name = CString::new(self.name.as_str()).expect("impossible cstring conversion");
+                shm_unlink(name.as_ptr());
+            }
         }
     }
 }
