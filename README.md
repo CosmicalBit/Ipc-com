@@ -72,7 +72,7 @@ fn main() -> Result<()> {
 
 The example uses two handles in one process because it fits nicely in one snippet. Normally `SharedValue::open()` would be called from another process using the same name.
 
-Names may be passed with or without the leading `/`. Processes sharing a value must use the same `SharedData` encoding and compatible crate versions.
+Names may be passed with or without the leading `/`. Processes sharing a value must use the same `SharedData` encoding and compatible crate versions. This header is incompatible with objects created before the watcher count was added; stop older processes and recreate their objects before reusing the same names.
 
 ## Creating a value
 
@@ -208,6 +208,8 @@ The current shared-memory layout is small:
 +----------------------+
 | generation           |
 +----------------------+
+| watcher count        |
++----------------------+
 | payload length       |
 +----------------------+
 |                      |
@@ -216,7 +218,7 @@ The current shared-memory layout is small:
 +----------------------+
 ```
 
-The lock and generation are atomic `u32`s.
+The lock, generation, and watcher count are atomic `u32`s. The watcher count covers both lock and generation waits.
 
 The lock contains `0` while free and the PID of the process that currently owns it while locked.
 
