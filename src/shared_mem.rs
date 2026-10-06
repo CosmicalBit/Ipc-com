@@ -179,10 +179,10 @@ impl Mapping {
         let ptr = unsafe { self.start.add(offset).as_ptr() };
         unsafe { std::slice::from_raw_parts(ptr, ammount) }
     }
-    pub(crate) fn atomic_ref(&self) -> Result<&AtomicU32> {
+    pub(crate) fn atomic_lock(&self) -> Result<&AtomicU32> {
         unsafe { self.start.as_ptr().cast::<AtomicU32>().as_ref().ok_or(Error::NullPtr) }
     }
-    pub(crate) fn atomic_gen(&self) -> Result<&AtomicU32> {
+    pub(crate) fn atomic_generation(&self) -> Result<&AtomicU32> {
         unsafe { self.start.add(size_of::<AtomicU32>()).as_ptr().cast::<AtomicU32>().as_ref().ok_or(Error::NullPtr) }
     }
     pub(crate) fn read_data<T>(&mut self) -> Result<T>

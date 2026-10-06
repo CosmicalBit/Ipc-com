@@ -45,17 +45,17 @@ where
     T: SharedData,
 {
     pub fn write(&mut self, data: &T) -> Result<()> {
-        let atomic = self.mapping.atomic_ref()?;
+        let atomic = self.mapping.atomic_lock()?;
 
         Self::lock(atomic)?;
 
         let res = self.mapping.write_data(data);
-        let new_atomic = self.mapping.atomic_ref()?;
+        let new_atomic = self.mapping.atomic_lock()?;
 
         let unlock_result = Self::unlock(new_atomic);
 
         if res.is_ok() {
-            let generation = self.mapping.atomic_gen()?;
+            let generation = self.mapping.atomic_generation()?;
             generation.fetch_add(1, Ordering::Release);
             Futex::new(generation).wake_all()?;
         }
@@ -68,6 +68,21 @@ impl<T, Access> SharedValue<T, Access>
 where
     T: SharedData,
 {
+    ///this function is meant to be used as an override when [`Error::OwnerDied`] happens
+    ///it ONLY forces the lock unlock, it doest change `generation` on purpose
+    ///the caller must make sure only one process force unlocks and no other process acquires the lock during recovery
+    pub unsafe fn force_unlock(&mut self) -> Result<()> {
+        let atomic = self.mapping.atomic_lock()?;
+        Self::unlock(atomic)
+    }
+    #[cfg(test)]
+    unsafe fn force_lock(&mut self) -> Result<()> {
+        let pid = unsafe { u32::try_from(libc::getpid())? };
+        let atomic = self.mapping.atomic_lock()?;
+        atomic.store(pid, Ordering::Release);
+        Ok(())
+    }
+
     fn lock(atomic: &AtomicU32) -> Result<()> {
         Self::lock_with_timeout(atomic, Duration::from_secs(5))
     }
@@ -124,7 +139,7 @@ where
     /// Reads the current value, growing this handle's mapping if needed.
     pub fn read(&mut self) -> Result<T> {
         {
-            let atomic = self.mapping.atomic_ref()?;
+            let atomic = self.mapping.atomic_lock()?;
 
             Self::lock(atomic)?;
         }
@@ -132,7 +147,7 @@ where
         let result = self.mapping.read_data();
 
         // The lock address may have moved with the mapping.
-        let atomic = self.mapping.atomic_ref()?;
+        let atomic = self.mapping.atomic_lock()?;
         let unlock_result = Self::unlock(atomic);
         let value = result?;
         unlock_result?;
@@ -158,7 +173,7 @@ where
 {
     /// Blocks until a successful write, then returns the current value.
     pub fn wait_for_change_value(&mut self) -> Result<T> {
-        let generation = self.mapping.atomic_gen()?;
+        let generation = self.mapping.atomic_generation()?;
         let expected = generation.load(Ordering::Acquire);
         let futex = Futex::new(generation);
         while generation.load(Ordering::Acquire) == expected {
@@ -202,6 +217,18 @@ mod test {
         assert!(matches!(SharedValue::<String, ReadOnly>::lock_with_timeout(&lock, Duration::from_millis(1)), Err(Error::OwnerDied)));
     }
 
+    #[test]
+    fn forced_unlock_clears_lock_without_changing_generation() {
+        let name = format!("/ipc_com_forced_unlock_{}", std::process::id());
+        let mut owner = SharedMemoryOptions::new().with_data(String::from("papa")).name(&name).create().unwrap();
+        let generation_before = owner.mapping.atomic_generation().unwrap().load(Ordering::Acquire);
+
+        unsafe { owner.force_lock().unwrap() };
+        assert_eq!(owner.mapping.atomic_lock().unwrap().load(Ordering::Acquire), u32::try_from(unsafe { libc::getpid() }).unwrap());
+        unsafe { owner.force_unlock().unwrap() };
+        assert_eq!(owner.mapping.atomic_lock().unwrap().load(Ordering::Acquire), 0);
+        assert_eq!(owner.mapping.atomic_generation().unwrap().load(Ordering::Acquire), generation_before);
+    }
     #[test]
     fn unlocking_wakes_waiting_reader() {
         let lock = AtomicU32::new(0);
