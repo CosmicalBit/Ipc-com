@@ -164,23 +164,23 @@ impl Mapping {
         end
     }
     //returns the offset where the ptr was left of
-    pub(crate) unsafe fn write_concrete_type<T>(&self, data: T, offset: usize) -> usize {
+    pub(crate) unsafe fn write_concrete_type<T>(&self, data: T, offset: usize) -> Result<usize> {
         //check for out of bounds
-        let end = offset.checked_add(size_of::<T>()).expect("write offset overflowed");
+        let end = offset.checked_add(size_of::<T>()).ok_or(Error::ArithmeticOverflow)?;
         assert!(end <= self.size, "write exceeded mapping");
 
         let ptr = unsafe { self.start.add(offset).cast::<T>() };
         unsafe { ptr.write(data) }
-        end
+        Ok(end)
     }
 
-    pub(crate) unsafe fn read_bytes(&self, ammount: usize, offset: usize) -> &[u8] {
+    pub(crate) unsafe fn read_bytes(&self, ammount: usize, offset: usize) -> Result<&[u8]> {
         //protect the read
-        let end = offset.checked_add(ammount).expect("read out of bounds");
+        let end = offset.checked_add(ammount).ok_or(Error::ArithmeticOverflow)?;
         assert!(end <= self.size, "read excedded mapping");
 
         let ptr = unsafe { self.start.add(offset).as_ptr() };
-        unsafe { std::slice::from_raw_parts(ptr, ammount) }
+        Ok(unsafe { std::slice::from_raw_parts(ptr, ammount) })
     }
     pub(crate) fn atomic_lock(&self) -> Result<&AtomicU32> {
         unsafe { self.start.as_ptr().cast::<AtomicU32>().as_ref().ok_or(Error::NullPtr) }
@@ -192,7 +192,7 @@ impl Mapping {
     where
         T: SharedData,
     {
-        let bytes: [u8; 4] = unsafe { self.read_bytes(size_of::<u32>(), size_of::<AtomicU32>() + size_of::<AtomicU32>()).try_into().unwrap() };
+        let bytes: [u8; 4] = unsafe { self.read_bytes(size_of::<u32>(), size_of::<AtomicU32>() + size_of::<AtomicU32>())?.try_into()? };
         let len = usize::try_from(u32::from_be_bytes(bytes))?;
         let required_size = HEADER_SIZE.checked_add(len).ok_or(Error::ArithmeticOverflow)?;
 
@@ -207,7 +207,7 @@ impl Mapping {
             self.start = unsafe { NonNull::new_unchecked(ptr.cast::<u8>()) };
             self.size = required_size;
         }
-        let bytes = unsafe { self.read_bytes(len, HEADER_SIZE) };
+        let bytes = unsafe { self.read_bytes(len, HEADER_SIZE)? };
         T::from_bytes(bytes)
     }
 
@@ -306,6 +306,6 @@ mod tests {
 
         mapping.remap(HEADER_SIZE + 1).unwrap();
         unsafe { mapping.write_bytes(&[42], HEADER_SIZE) };
-        assert_eq!(unsafe { mapping.read_bytes(1, HEADER_SIZE) }, &[42]);
+        assert_eq!(unsafe { mapping.read_bytes(1, HEADER_SIZE).unwrap() }, &[42]);
     }
 }

@@ -95,7 +95,7 @@ where
         Ok(())
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     unsafe fn force_lock(&mut self) -> Result<()> {
         let pid = unsafe { u32::try_from(libc::getpid())? };
         let atomic = self.mapping.atomic_lock()?;

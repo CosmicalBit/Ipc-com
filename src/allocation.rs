@@ -20,10 +20,21 @@ impl<Access> Allocation<Access> {
 
     pub(crate) fn write_all(&mut self, data: &[u8]) -> Result<()> {
         let len = u32::try_from(data.len())?;
-        let offset = unsafe { self.mapping.write_concrete_type(AtomicU32::new(0), 0) };
-        let offset = unsafe { self.mapping.write_concrete_type(AtomicU32::new(0), offset) };
+        let offset = unsafe { self.mapping.write_concrete_type(AtomicU32::new(0), 0)? };
+        let offset = unsafe { self.mapping.write_concrete_type(AtomicU32::new(0), offset)? };
         let offset = unsafe { self.mapping.write_bytes(&len.to_be_bytes(), offset) };
         unsafe { self.mapping.write_bytes(data, offset) };
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn header_has_two_atomic_words_and_a_length_word() {
+        assert_eq!(HEADER_SIZE, 3 * size_of::<u32>());
+        assert_eq!(align_of::<AtomicU32>(), align_of::<u32>());
     }
 }

@@ -67,7 +67,7 @@ impl<'a> Futex<'a> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod test {
     use super::*;
 

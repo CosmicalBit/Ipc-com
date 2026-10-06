@@ -7,7 +7,7 @@ license = "Apache-2.0"
 repository = "https://github.com/CosmicalBit/Ipc-com"
 keywords = ["ipc", "shared-memory", "interprocess", "linux", "futex"]
 categories = ["os", "concurrency", "memory-management"]
-rust-version = "1.85"
+rust-version = "1.87"
 
 [dependencies]
 libc = "0.2.189"
@@ -17,6 +17,12 @@ opt-level = 3
 lto = "fat"
 strip = "symbols"
 panic = "abort"
+
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = "none"
+lto = "fat"
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

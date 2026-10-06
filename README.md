@@ -306,6 +306,17 @@ Processes opening the same value also need to use the same `SharedData` encoding
 
 ## Examples
 
+For a real two-process example, start the [sender](examples/sender.rs) and then
+the [receiver](examples/receiver.rs) in separate terminals:
+
+```sh
+cargo run --release --example sender
+cargo run --release --example receiver
+```
+
+The sender updates a named counter once per second. The receiver opens it and
+prints each change returned by `wait_for_change_value()`. Stop both with Ctrl-C.
+
 The [writable example](examples/exemple1.rs) shows updates and change notifications:
 
 ```sh
@@ -317,6 +328,27 @@ The [read-only example](examples/read_only.rs) shows the default access mode:
 ```sh
 cargo run --example read_only
 ```
+
+## Profiling and safety tests
+
+```sh
+./scripts/perf.sh stat --payload 64
+./scripts/perf.sh record --payload 65536
+./scripts/perf.sh report
+./scripts/test.sh
+```
+
+The profiling example uses two processes and checks every request and response.
+`--payload` includes its 8-byte sequence and defaults to 64 bytes;
+`--iterations` defaults to 100,000. The profiling build keeps release
+optimizations and includes debug symbols. `perf record` writes `perf.data`,
+which can also be opened in Hotspot. The Linux `perf` tool and profiling
+permissions must be set up on the host.
+
+`./scripts/test.sh` runs normal tests, five deterministic randomized-layout
+seeds, AddressSanitizer with layout seed 17, and three Miri seeds. Run a single
+mode with `normal`, `layout`, `asan`, or `miri`. Plain `cargo test` stays fast
+and uses the normal toolchain.
 
 ## License
 
