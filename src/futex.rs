@@ -42,7 +42,7 @@ impl<'a> Futex<'a> {
     pub(crate) fn wait_timeout(&self, expected: u32, timeout: Duration) -> Result<WaitResult> {
         let timeout = libc::timespec {
             tv_sec: libc::time_t::try_from(timeout.as_secs())?,
-            tv_nsec: timeout.subsec_nanos() as libc::c_long,
+            tv_nsec: libc::c_long::from(i32::try_from(timeout.subsec_nanos())?),
         };
 
         let ret = unsafe { libc::syscall(libc::SYS_futex, self.value.as_ptr(), libc::FUTEX_WAIT, expected, &timeout) };

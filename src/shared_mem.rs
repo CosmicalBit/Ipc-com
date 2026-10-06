@@ -24,6 +24,7 @@ pub enum Error {
     DuplicatedName(std::io::Error),
     Futex(std::io::Error),
     OwnerDied,
+    LockStateError,
 }
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -38,6 +39,7 @@ impl std::fmt::Display for Error {
             Self::DuplicatedName(error) => write!(f, "shared memory name already exists: {error}"),
             Self::Futex(error) => write!(f, "futex operation: {error}"),
             Self::OwnerDied => write!(f, "shared memory lock owner died"),
+            Self::LockStateError => write!(f, "the lock hit a critical failure"),
         }
     }
 }
@@ -299,7 +301,7 @@ mod tests {
 
         let mut stat = MaybeUninit::<libc::stat>::uninit();
         assert_eq!(unsafe { libc::fstat(mapping.fd, stat.as_mut_ptr()) }, 0);
-        assert_eq!(unsafe { stat.assume_init() }.st_size, HEADER_SIZE as libc::off_t);
+        assert_eq!(unsafe { stat.assume_init() }.st_size, libc::off_t::try_from(HEADER_SIZE).unwrap());
 
         mapping.remap(HEADER_SIZE + 1).unwrap();
         unsafe { mapping.write_bytes(&[42], HEADER_SIZE) };

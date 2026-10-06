@@ -68,13 +68,33 @@ impl<T, Access> SharedValue<T, Access>
 where
     T: SharedData,
 {
-    ///this function is meant to be used as an override when [`Error::OwnerDied`] happens
-    ///it ONLY forces the lock unlock, it doest change `generation` on purpose
-    ///the caller must make sure only one process force unlocks and no other process acquires the lock during recovery
-    pub unsafe fn force_unlock(&mut self) -> Result<()> {
+    /// Clears the lock after [`Error::OwnerDied`] without changing `generation`
+    /// or waking processes waiting for the lock.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure only one process performs recovery and no other
+    /// process acquires the lock until recovery is complete.
+    pub unsafe fn force_unlock(&self) -> Result<bool> {
         let atomic = self.mapping.atomic_lock()?;
-        Self::unlock(atomic)
+
+        let unlocked = atomic.compare_exchange(atomic.load(Ordering::Acquire), 0, Ordering::Release, Ordering::Relaxed).is_ok();
+
+        Ok(unlocked)
     }
+
+    /// Wakes processes waiting for the lock during recovery.
+    ///
+    /// # Safety
+    ///
+    /// The caller must coordinate recovery so waiters do not acquire the lock
+    /// before the shared value is ready to use.
+    pub unsafe fn force_awake(&self) -> Result<()> {
+        let atomic = self.mapping.atomic_lock()?;
+        Futex::new(atomic).wake_all()?;
+        Ok(())
+    }
+
     #[cfg(test)]
     unsafe fn force_lock(&mut self) -> Result<()> {
         let pid = unsafe { u32::try_from(libc::getpid())? };
@@ -383,7 +403,7 @@ mod test {
                         let value = reader.read().unwrap();
                         let number = u32::from_be_bytes(value.name);
 
-                        assert_eq!(value.year, number as u16, "torn read: name encoded {number}, year was {}", value.year);
+                        assert_eq!(value.year, u16::try_from(number).unwrap(), "torn read: name encoded {number}, year was {}", value.year);
                     }
                 });
             }
@@ -391,7 +411,7 @@ mod test {
             for i in 0..ITERATIONS {
                 owner
                     .write(&TestData {
-                        name: (i as u32).to_be_bytes(),
+                        name: u32::from(i).to_be_bytes(),
                         year: i,
                     })
                     .unwrap();

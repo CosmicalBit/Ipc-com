@@ -18,12 +18,23 @@ lto = "fat"
 strip = "symbols"
 panic = "abort"
 
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
 [lints.clippy]
 mem_forget = "deny"
 exit = "warn"
 dbg_macro = "deny"
+trivially_copy_pass_by_ref = "warn"
+large_types_passed_by_value = "warn"
+cast_possible_truncation = "deny"
+cast_possible_wrap = "warn"
+cast_sign_loss = "warn"
+cast_lossless="warn"
+
 todo = "warn"
 unimplemented = "warn"
+needless_pass_by_ref_mut = "warn"
 
 large_stack_arrays = "warn"
 large_futures = "warn"
