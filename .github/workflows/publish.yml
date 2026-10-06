@@ -3,7 +3,7 @@ name: Publish
 on:
   push:
     branches: [main]
-    paths: [Cargo.toml, .github/workflows/publish.yml]
+    paths: [Cargo.toml, Cargo.lock, .github/workflows/publish.yml]
 
 permissions:
   contents: read
