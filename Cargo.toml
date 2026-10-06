@@ -1,12 +1,12 @@
 [package]
 name = "ipc-com"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
-description = "Simple shared-memory IPC for Rust"
+description = "Linux interprocess communication using shared memory and futexes"
 license = "Apache-2.0"
 repository = "https://github.com/CosmicalBit/Ipc-com"
-keywords = ["ipc", "shared-memory", "interprocess", "linux"]
-categories = ["os", "concurrency"]
+keywords = ["ipc", "shared-memory", "interprocess", "linux", "futex"]
+categories = ["os", "concurrency", "memory-management"]
 rust-version = "1.85"
 
 [dependencies]

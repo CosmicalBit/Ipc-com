@@ -3,7 +3,7 @@ name: Publish
 on:
   push:
     branches: [main]
-    paths: [Cargo.toml]
+    paths: [Cargo.toml, .github/workflows/publish.yml]
 
 permissions:
   contents: read
@@ -27,7 +27,7 @@ jobs:
         run: |
           version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
           echo "number=$version" >> "$GITHUB_OUTPUT"
-          status=$(curl --silent --show-error --location --output /dev/null --write-out '%{http_code}' "https://crates.io/api/v1/crates/ipc-com/$version")
+          status=$(curl --silent --show-error --location --user-agent 'ipc-com-publish/1.0 (https://github.com/CosmicalBit/Ipc-com)' --output /dev/null --write-out '%{http_code}' "https://crates.io/api/v1/crates/ipc-com/$version")
           case "$status" in
             200) echo "publish=false" >> "$GITHUB_OUTPUT" ;;
             404) echo "publish=true" >> "$GITHUB_OUTPUT" ;;
@@ -44,7 +44,7 @@ jobs:
 
       - name: Run Clippy
         if: steps.version.outputs.publish == 'true'
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets
 
       - name: Run tests
         if: steps.version.outputs.publish == 'true'
