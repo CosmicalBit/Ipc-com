@@ -4,7 +4,7 @@ use std::sync::atomic::AtomicU32;
 pub struct ReadOnly;
 pub struct ReadWrite;
 
-pub(crate) const HEADER_SIZE: usize = size_of::<AtomicU32>() + size_of::<u32>() + size_of::<AtomicU32>();
+pub(crate) const HEADER_SIZE: usize = size_of::<AtomicU32>().checked_mul(3).unwrap().checked_add(size_of::<u32>()).unwrap();
 
 pub(crate) struct Allocation<Access> {
     pub(crate) mapping: Mapping,
@@ -22,6 +22,7 @@ impl<Access> Allocation<Access> {
         let len = u32::try_from(data.len())?;
         let offset = unsafe { self.mapping.write_concrete_type(AtomicU32::new(0), 0)? };
         let offset = unsafe { self.mapping.write_concrete_type(AtomicU32::new(0), offset)? };
+        let offset = unsafe { self.mapping.write_concrete_type(AtomicU32::new(0), offset)? };
         let offset = unsafe { self.mapping.write_bytes(&len.to_be_bytes(), offset) };
         unsafe { self.mapping.write_bytes(data, offset) };
         Ok(())
@@ -33,8 +34,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn header_has_two_atomic_words_and_a_length_word() {
-        assert_eq!(HEADER_SIZE, 3 * size_of::<u32>());
+    fn header_has_three_atomic_words_and_length() {
+        assert_eq!(HEADER_SIZE, 4 * size_of::<u32>());
         assert_eq!(align_of::<AtomicU32>(), align_of::<u32>());
     }
 }

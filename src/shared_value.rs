@@ -47,17 +47,17 @@ where
     pub fn write(&mut self, data: &T) -> Result<()> {
         let atomic = self.mapping.atomic_lock()?;
 
-        Self::lock(atomic)?;
+        Self::lock(atomic, self.mapping.atomic_watchers()?)?;
 
         let res = self.mapping.write_data(data);
         let new_atomic = self.mapping.atomic_lock()?;
 
-        let unlock_result = Self::unlock(new_atomic);
+        let unlock_result = Self::unlock(new_atomic, self.mapping.atomic_watchers()?);
 
         if res.is_ok() {
             let generation = self.mapping.atomic_generation()?;
             generation.fetch_add(1, Ordering::Release);
-            Futex::new(generation).wake_all()?;
+            Futex::new(generation, self.mapping.atomic_watchers()?).wake_all()?;
         }
 
         res.and(unlock_result)
@@ -91,7 +91,7 @@ where
     /// before the shared value is ready to use.
     pub unsafe fn force_awake(&self) -> Result<()> {
         let atomic = self.mapping.atomic_lock()?;
-        Futex::new(atomic).wake_all()?;
+        Futex::new(atomic, self.mapping.atomic_watchers()?).wake_all()?;
         Ok(())
     }
 
@@ -103,11 +103,11 @@ where
         Ok(())
     }
 
-    fn lock(atomic: &AtomicU32) -> Result<()> {
-        Self::lock_with_timeout(atomic, Duration::from_secs(5))
+    fn lock(atomic: &AtomicU32, watchers: &AtomicU32) -> Result<()> {
+        Self::lock_with_timeout(atomic, watchers, Duration::from_secs(5))
     }
 
-    fn lock_with_timeout(atomic: &AtomicU32, timeout: Duration) -> Result<()> {
+    fn lock_with_timeout(atomic: &AtomicU32, watchers: &AtomicU32, timeout: Duration) -> Result<()> {
         // The lock word contains the owning process ID, or zero when unlocked.
         let pid = u32::try_from(unsafe { libc::getpid() })?;
         let mut observed_owner = 0;
@@ -120,7 +120,7 @@ where
                     observed_owner = current;
                     last_check = Instant::now();
                 }
-                let futex = Futex::new(atomic);
+                let futex = Futex::new(atomic, watchers);
 
                 match futex.wait_timeout(current, timeout.saturating_sub(last_check.elapsed()))? {
                     WaitResult::Woken => continue,
@@ -152,23 +152,23 @@ where
             _ => Err(Error::Futex(error)),
         }
     }
-    fn unlock(atomic: &AtomicU32) -> Result<()> {
+    fn unlock(atomic: &AtomicU32, watchers: &AtomicU32) -> Result<()> {
         atomic.store(0, Ordering::Release);
-        Futex::new(atomic).wake_all()
+        Futex::new(atomic, watchers).wake_all()
     }
     /// Reads the current value, growing this handle's mapping if needed.
     pub fn read(&mut self) -> Result<T> {
         {
             let atomic = self.mapping.atomic_lock()?;
 
-            Self::lock(atomic)?;
+            Self::lock(atomic, self.mapping.atomic_watchers()?)?;
         }
         // Unlock even when reading or decoding fails.
         let result = self.mapping.read_data();
 
         // The lock address may have moved with the mapping.
         let atomic = self.mapping.atomic_lock()?;
-        let unlock_result = Self::unlock(atomic);
+        let unlock_result = Self::unlock(atomic, self.mapping.atomic_watchers()?);
         let value = result?;
         unlock_result?;
         Ok(value)
@@ -202,7 +202,7 @@ where
     pub fn wait_for_change_value(&mut self) -> Result<T> {
         let generation = self.mapping.atomic_generation()?;
         let expected = generation.load(Ordering::Acquire);
-        let futex = Futex::new(generation);
+        let futex = Futex::new(generation, self.mapping.atomic_watchers()?);
         while generation.load(Ordering::Acquire) == expected {
             futex.wait(expected)?;
         }
@@ -241,7 +241,8 @@ mod test {
     fn dead_lock_owner_is_reported() {
         // Linux PIDs are bounded well below pid_t::MAX.
         let lock = AtomicU32::new(libc::pid_t::MAX as u32);
-        assert!(matches!(SharedValue::<String>::lock_with_timeout(&lock, Duration::from_millis(1)), Err(Error::OwnerDied)));
+        let watchers = AtomicU32::new(0);
+        assert!(matches!(SharedValue::<String>::lock_with_timeout(&lock, &watchers, Duration::from_millis(1)), Err(Error::OwnerDied)));
     }
 
     #[test]
@@ -259,21 +260,23 @@ mod test {
     #[test]
     fn unlocking_wakes_waiting_reader() {
         let lock = AtomicU32::new(0);
-        SharedValue::<String>::lock(&lock).unwrap();
+        let watchers = AtomicU32::new(0);
+        SharedValue::<String>::lock(&lock, &watchers).unwrap();
 
         std::thread::scope(|scope| {
             let (started, ready) = std::sync::mpsc::channel();
             let lock = &lock;
+            let watchers = &watchers;
             let waiter = scope.spawn(move || {
                 started.send(()).unwrap();
                 let start = Instant::now();
-                SharedValue::<String>::lock_with_timeout(lock, Duration::from_secs(2)).unwrap();
+                SharedValue::<String>::lock_with_timeout(lock, watchers, Duration::from_secs(2)).unwrap();
                 assert!(start.elapsed() < Duration::from_secs(1), "unlock did not wake the waiter");
-                SharedValue::<String>::unlock(lock).unwrap();
+                SharedValue::<String>::unlock(lock, watchers).unwrap();
             });
             ready.recv().unwrap();
             std::thread::sleep(Duration::from_millis(10));
-            SharedValue::<String>::unlock(lock).unwrap();
+            SharedValue::<String>::unlock(lock, watchers).unwrap();
             waiter.join().unwrap();
         });
     }

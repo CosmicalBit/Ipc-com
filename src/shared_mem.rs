@@ -21,6 +21,7 @@ pub enum Error {
     TryConversion(std::num::TryFromIntError),
     SliceConversion(std::array::TryFromSliceError),
     ArithmeticOverflow,
+    IncompatibleHeader,
     DuplicatedName(std::io::Error),
     Futex(std::io::Error),
     OwnerDied,
@@ -36,6 +37,7 @@ impl std::fmt::Display for Error {
             Self::TryConversion(error) => write!(f, "integer conversion: {error}"),
             Self::SliceConversion(error) => write!(f, "slice conversion: {error}"),
             Self::ArithmeticOverflow => write!(f, "shared memory size overflow"),
+            Self::IncompatibleHeader => write!(f, "incompatible shared memory header"),
             Self::DuplicatedName(error) => write!(f, "shared memory name already exists: {error}"),
             Self::Futex(error) => write!(f, "futex operation: {error}"),
             Self::OwnerDied => write!(f, "shared memory lock owner died"),
@@ -107,6 +109,11 @@ impl Mapping {
                 return Err(error.into());
             },
         };
+
+        if size < HEADER_SIZE {
+            unsafe { libc::close(fd) };
+            return Err(Error::IncompatibleHeader);
+        }
 
         let ptr = unsafe { libc::mmap(std::ptr::null_mut(), size, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, fd, 0) };
 
@@ -185,6 +192,10 @@ impl Mapping {
     pub(crate) fn atomic_lock(&self) -> Result<&AtomicU32> {
         unsafe { self.start.as_ptr().cast::<AtomicU32>().as_ref().ok_or(Error::NullPtr) }
     }
+    pub(crate) fn atomic_watchers(&self) -> Result<&AtomicU32> {
+        let offset = size_of::<AtomicU32>().checked_mul(2).ok_or(Error::ArithmeticOverflow)?;
+        unsafe { self.start.add(offset).as_ptr().cast::<AtomicU32>().as_ref().ok_or(Error::NullPtr) }
+    }
     pub(crate) fn atomic_generation(&self) -> Result<&AtomicU32> {
         unsafe { self.start.add(size_of::<AtomicU32>()).as_ptr().cast::<AtomicU32>().as_ref().ok_or(Error::NullPtr) }
     }
@@ -192,7 +203,8 @@ impl Mapping {
     where
         T: SharedData,
     {
-        let bytes: [u8; 4] = unsafe { self.read_bytes(size_of::<u32>(), size_of::<AtomicU32>() + size_of::<AtomicU32>())?.try_into()? };
+        let length_offset = size_of::<AtomicU32>().checked_mul(3).ok_or(Error::ArithmeticOverflow)?;
+        let bytes: [u8; 4] = unsafe { self.read_bytes(size_of::<u32>(), length_offset)?.try_into()? };
         let len = usize::try_from(u32::from_be_bytes(bytes))?;
         let required_size = HEADER_SIZE.checked_add(len).ok_or(Error::ArithmeticOverflow)?;
 
@@ -225,7 +237,8 @@ impl Mapping {
         }
 
         unsafe {
-            self.write_bytes(&new_len.to_be_bytes(), size_of::<AtomicU32>().checked_mul(2).ok_or(Error::ArithmeticOverflow)?);
+            let length_offset = size_of::<AtomicU32>().checked_mul(3).ok_or(Error::ArithmeticOverflow)?;
+            self.write_bytes(&new_len.to_be_bytes(), length_offset);
             self.write_bytes(&bytes, HEADER_SIZE);
         };
 
@@ -291,6 +304,13 @@ impl Drop for Mapping {
 #[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn undersized_header_is_rejected() {
+        let name = format!("/ipc_com_short_header_{}", std::process::id());
+        let _mapping = Mapping::init_shared_memory(&name, HEADER_SIZE - 1).unwrap();
+        assert!(matches!(Mapping::new_connect(&name), Err(Error::IncompatibleHeader)));
+    }
 
     #[test]
     fn failed_remap_restores_file_size_and_keeps_mapping_usable() {

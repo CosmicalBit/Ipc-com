@@ -1,9 +1,10 @@
 use crate::{Error, Result};
-use std::sync::atomic::AtomicU32;
+use std::sync::atomic::{AtomicU32, Ordering, fence};
 use std::time::Duration;
 
-pub(crate) struct Futex<'a> {
-    value: &'a AtomicU32,
+pub(crate) struct Futex<'a, 'b> {
+    to_watch: &'a AtomicU32,
+    watchers: &'b AtomicU32,
 }
 
 pub(crate) enum WaitResult {
@@ -11,13 +12,15 @@ pub(crate) enum WaitResult {
     TimedOut,
 }
 
-impl<'a> Futex<'a> {
-    pub(crate) fn new(value: &'a AtomicU32) -> Self {
-        Self { value }
+impl<'a, 'b> Futex<'a, 'b> {
+    pub(crate) fn new(to_watch: &'a AtomicU32, watchers: &'b AtomicU32) -> Self {
+        Self { to_watch, watchers }
     }
     ///its BLOCKING
     pub(crate) fn wait(&self, expected: u32) -> Result<()> {
-        let ret = unsafe { libc::syscall(libc::SYS_futex, self.value.as_ptr(), libc::FUTEX_WAIT, expected, std::ptr::null::<libc::timespec>()) };
+        self.watchers.fetch_add(1, Ordering::SeqCst);
+        let ret = unsafe { libc::syscall(libc::SYS_futex, self.to_watch.as_ptr(), libc::FUTEX_WAIT, expected, std::ptr::null::<libc::timespec>()) };
+        self.watchers.fetch_sub(1, Ordering::SeqCst);
 
         if ret == -1 {
             let error = std::io::Error::last_os_error();
@@ -32,7 +35,13 @@ impl<'a> Futex<'a> {
     }
 
     pub(crate) fn wake_all(&self) -> Result<()> {
-        let ret = unsafe { libc::syscall(libc::SYS_futex, self.value.as_ptr(), libc::FUTEX_WAKE, i32::MAX) };
+        // Publish the futex value before deciding whether a waiter can sleep.
+        fence(Ordering::SeqCst);
+        if self.watchers.load(Ordering::SeqCst) == 0 {
+            return Ok(());
+        }
+
+        let ret = unsafe { libc::syscall(libc::SYS_futex, self.to_watch.as_ptr(), libc::FUTEX_WAKE, i32::MAX) };
         if ret == -1 {
             let error = std::io::Error::last_os_error();
             return Err(Error::Futex(error));
@@ -45,7 +54,9 @@ impl<'a> Futex<'a> {
             tv_nsec: libc::c_long::from(i32::try_from(timeout.subsec_nanos())?),
         };
 
-        let ret = unsafe { libc::syscall(libc::SYS_futex, self.value.as_ptr(), libc::FUTEX_WAIT, expected, &timeout) };
+        self.watchers.fetch_add(1, Ordering::SeqCst);
+        let ret = unsafe { libc::syscall(libc::SYS_futex, self.to_watch.as_ptr(), libc::FUTEX_WAIT, expected, &timeout) };
+        self.watchers.fetch_sub(1, Ordering::SeqCst);
 
         if ret == 0 {
             return Ok(WaitResult::Woken);
@@ -74,7 +85,8 @@ mod test {
     #[test]
     fn changed_expected_value_is_retryable() {
         let value = AtomicU32::new(1);
-        let futex = Futex::new(&value);
+        let watchers = AtomicU32::new(0);
+        let futex = Futex::new(&value, &watchers);
         futex.wait(0).unwrap();
         futex.wake_all().unwrap();
     }
