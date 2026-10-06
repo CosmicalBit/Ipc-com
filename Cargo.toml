@@ -5,7 +5,7 @@ edition = "2024"
 description = "Simple shared-memory IPC for Rust"
 license = "Apache-2.0"
 repository = "https://github.com/CosmicalBit/Ipc-com"
-keywords = ["ipc", "shared-memory", "interprocess", "linux", "proccess-communication"]
+keywords = ["ipc", "shared-memory", "interprocess", "linux"]
 categories = ["os", "concurrency"]
 rust-version = "1.85"
 
