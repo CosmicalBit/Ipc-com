@@ -14,7 +14,7 @@ Define how your type is encoded, create a value, and connect a second handle:
 
 ```rust
 use std::borrow::Cow;
-use ipc_com::{ReadOnly, Result, SharedData, SharedMemoryOptions, SharedValue};
+use ipc_com::{Result, SharedData, SharedMemoryOptions, SharedValue};
 
 #[derive(Debug, PartialEq, Eq)]
 struct Counter(u64);
@@ -39,7 +39,7 @@ fn main() -> Result<()> {
         .with_data(Counter(1))
         .create()?;
 
-    let mut reader = SharedValue::<Counter, ReadOnly>::new_reader(&name)?;
+    let mut reader = SharedValue::<Counter>::open(&name)?;
     assert_eq!(reader.read()?, Counter(1));
 
     owner.write(&Counter(2))?;
@@ -48,7 +48,7 @@ fn main() -> Result<()> {
 }
 ```
 
-The example opens both handles in one process. For IPC, create the value in one process and call `SharedValue::<YourType, ReadOnly>::new_reader(name)` in another process while the creator is still alive. Both processes must use the same name, encoding, and crate version because the shared-memory header is part of the format. Names may be passed with or without a leading `/`.
+The example opens both handles in one process. For IPC, create the value in one process and call `SharedValue::<YourType>::open(name)` in another process while the creator is still alive. Both processes must use the same name, encoding, and crate version because the shared-memory header is part of the format. Names may be passed with or without a leading `/`.
 
 For a value that does not need updates, omit `.to_mutable()`. Declare the resulting handle `mut` to call `read()`; it does not expose `write()`. Reading and blocking waits need a mutable handle because its mapping may grow when the stored value grows.
 

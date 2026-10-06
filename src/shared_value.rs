@@ -21,7 +21,7 @@ pub trait SharedData: Sized {
     fn from_bytes(bytes: &[u8]) -> Result<Self>;
 }
 
-pub struct SharedValue<T, Access>
+pub struct SharedValue<T, Access = ReadOnly>
 where
     T: SharedData,
 {
@@ -174,16 +174,23 @@ where
         Ok(value)
     }
 }
+
 impl<T> SharedValue<T, ReadOnly>
 where
     T: SharedData,
 {
     ///user_facing: function for reading IPC data from the `name`
-    pub fn new_reader(name: &str) -> Result<Self> {
+    pub fn open(name: &str) -> Result<Self> {
         let name = if name.starts_with('/') { name.to_owned() } else { format!("/{name}") };
         let mapping = Mapping::new_connect(&name)?;
 
         Ok(Self { mapping, _phantom: PhantomData })
+    }
+    pub fn into_mutable(self) -> SharedValue<T, ReadWrite> {
+        SharedValue {
+            mapping: self.mapping,
+            _phantom: PhantomData,
+        }
     }
 }
 
@@ -209,7 +216,7 @@ where
         let name = self.mapping.name().to_owned();
 
         Ok(std::thread::spawn(move || -> Result<T> {
-            let mut value: SharedValue<T, ReadOnly> = SharedValue::new_reader(name.to_str().expect("error convertingto str"))?;
+            let mut value: SharedValue<T> = SharedValue::open(name.to_str().expect("error convertingto str"))?;
             value.wait_for_change_value()
         }))
     }
@@ -234,7 +241,7 @@ mod test {
     fn dead_lock_owner_is_reported() {
         // Linux PIDs are bounded well below pid_t::MAX.
         let lock = AtomicU32::new(libc::pid_t::MAX as u32);
-        assert!(matches!(SharedValue::<String, ReadOnly>::lock_with_timeout(&lock, Duration::from_millis(1)), Err(Error::OwnerDied)));
+        assert!(matches!(SharedValue::<String>::lock_with_timeout(&lock, Duration::from_millis(1)), Err(Error::OwnerDied)));
     }
 
     #[test]
@@ -252,7 +259,7 @@ mod test {
     #[test]
     fn unlocking_wakes_waiting_reader() {
         let lock = AtomicU32::new(0);
-        SharedValue::<String, ReadOnly>::lock(&lock).unwrap();
+        SharedValue::<String>::lock(&lock).unwrap();
 
         std::thread::scope(|scope| {
             let (started, ready) = std::sync::mpsc::channel();
@@ -260,13 +267,13 @@ mod test {
             let waiter = scope.spawn(move || {
                 started.send(()).unwrap();
                 let start = Instant::now();
-                SharedValue::<String, ReadOnly>::lock_with_timeout(lock, Duration::from_secs(2)).unwrap();
+                SharedValue::<String>::lock_with_timeout(lock, Duration::from_secs(2)).unwrap();
                 assert!(start.elapsed() < Duration::from_secs(1), "unlock did not wake the waiter");
-                SharedValue::<String, ReadOnly>::unlock(lock).unwrap();
+                SharedValue::<String>::unlock(lock).unwrap();
             });
             ready.recv().unwrap();
             std::thread::sleep(Duration::from_millis(10));
-            SharedValue::<String, ReadOnly>::unlock(lock).unwrap();
+            SharedValue::<String>::unlock(lock).unwrap();
             waiter.join().unwrap();
         });
     }
@@ -300,7 +307,7 @@ mod test {
     fn existing_reader_reads_grown_value() {
         let name = format!("ipc_com_grown_reader_{}", std::process::id());
         let mut owner = SharedMemoryOptions::new().to_mutable().name(&name).with_data(String::from("b")).create().unwrap();
-        let mut reader = SharedValue::<String, ReadOnly>::new_reader(&name).unwrap();
+        let mut reader = SharedValue::<String>::open(&name).unwrap();
 
         owner.write(&String::from("a much longer value")).unwrap();
         assert_eq!(reader.read().unwrap(), "a much longer value");
@@ -315,7 +322,8 @@ mod test {
         let name = format!("ipc_com_read_only_{}", std::process::id());
         let value = String::from("read only data");
 
-        let mut mem = SharedMemoryOptions::new().name(&name).with_data(value.clone()).create().unwrap();
+        let options: SharedMemoryOptions<String> = SharedMemoryOptions::new();
+        let mut mem: SharedValue<String> = options.name(&name).with_data(value.clone()).create().unwrap();
         assert_eq!(mem.read().unwrap(), value);
     }
 
@@ -325,7 +333,7 @@ mod test {
         let value = String::from("shajred data");
 
         let mut owner = SharedMemoryOptions::new().to_mutable().name(&name).with_data(value.clone()).create().unwrap();
-        let mut reader = SharedValue::<String, ReadOnly>::new_reader(&name).unwrap();
+        let mut reader = SharedValue::<String>::open(&name).unwrap();
 
         assert_eq!(owner.read().unwrap(), value);
         assert_eq!(reader.read().unwrap(), value);
@@ -338,7 +346,7 @@ mod test {
 
         std::thread::scope(|scope| {
             let waiting = scope.spawn(|| {
-                let mut reader = SharedValue::<String, ReadOnly>::new_reader(&name).unwrap();
+                let mut reader = SharedValue::<String>::open(&name).unwrap();
                 reader.wait_for_change_value().unwrap()
             });
             std::thread::sleep(Duration::from_millis(50));
@@ -351,7 +359,7 @@ mod test {
     fn async_wait_returns_updated_value() {
         let name = format!("ipc_com_async_wait_{}", std::process::id());
         let mut owner = SharedMemoryOptions::new().to_mutable().name(&name).with_data(String::from("before")).create().unwrap();
-        let reader = SharedValue::<String, ReadOnly>::new_reader(&name).unwrap();
+        let reader = SharedValue::<String>::open(&name).unwrap();
 
         let waiting = reader.wait_for_change_async().unwrap();
         std::thread::sleep(Duration::from_millis(50));
@@ -397,7 +405,7 @@ mod test {
                 let name = &name;
 
                 scope.spawn(move || {
-                    let mut reader = SharedValue::<TestData, ReadOnly>::new_reader(name).unwrap();
+                    let mut reader = SharedValue::<TestData>::open(name).unwrap();
 
                     for _ in 0..ITERATIONS {
                         let value = reader.read().unwrap();

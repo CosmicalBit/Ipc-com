@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 pub struct Missing;
 pub struct Present;
 
-pub struct SharedMemoryOptions<T, Access, DataState, NameState>
+pub struct SharedMemoryOptions<T, Access = ReadOnly, DataState = Missing, NameState = Missing>
 where
     T: SharedData,
 {
@@ -89,7 +89,7 @@ where
         }
     }
     ///Chooses the name for the smh_link socket, it doest need to start with a foward slash.
-    ///Note: This is the name that you will need to use when doing [`SharedValue::new_reader()`]
+    ///Note: This is the name that you will need to use when doing [`SharedValue::open()`]
     pub fn name(self, name: &str) -> SharedMemoryOptions<T, Access, DataState, Present> {
         let name = if name.starts_with('/') { name.to_owned() } else { format!("/{name}") };
 

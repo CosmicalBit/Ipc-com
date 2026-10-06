@@ -5,7 +5,7 @@
 use std::borrow::Cow;
 use std::time::Duration;
 
-use ipc_com::{ReadOnly, Result, SharedData, SharedMemoryOptions, SharedValue};
+use ipc_com::{Result, SharedData, SharedMemoryOptions, SharedValue};
 
 #[derive(Debug, PartialEq, Eq)]
 struct Moment {
@@ -34,7 +34,7 @@ fn main() -> Result<()> {
 
     // A separate process could use the same name to connect. Here we open a
     // second handle in this process so the whole example runs in one command.
-    let mut reader = SharedValue::<Moment, ReadOnly>::new_reader(&name)?;
+    let mut reader = SharedValue::<Moment>::open(&name)?;
     assert_eq!(reader.read()?, Moment { day: 30 });
 
     creator.write(&Moment { day: 31 })?;
@@ -43,7 +43,7 @@ fn main() -> Result<()> {
     // Wait on a connected reader while the creator writes the next value.
     std::thread::scope(|scope| -> Result<()> {
         let waiting = scope.spawn(|| {
-            let mut reader = SharedValue::<Moment, ReadOnly>::new_reader(&name)?;
+            let mut reader = SharedValue::<Moment>::open(&name)?;
             reader.wait_for_change_value()
         });
         std::thread::sleep(Duration::from_millis(50));
