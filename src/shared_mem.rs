@@ -145,6 +145,7 @@ impl Mapping {
 
         Ok(())
     }
+
     ///# Safety
     /// `self.start` must be:
     /// pointed to a valid place
