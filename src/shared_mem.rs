@@ -193,6 +193,7 @@ impl Mapping {
         let ptr = unsafe { self.start.add(offset).as_ptr() };
         Ok(unsafe { std::slice::from_raw_parts(ptr, ammount) })
     }
+
     pub(crate) fn atomic_lock(&self) -> Result<&AtomicU32> {
         unsafe { self.start.as_ptr().cast::<AtomicU32>().as_ref().ok_or(Error::NullPtr) }
     }
@@ -202,10 +203,7 @@ impl Mapping {
     pub(crate) fn atomic_generation(&self) -> Result<&AtomicU32> {
         unsafe { self.start.add(GENERATION_OFFSET).as_ptr().cast::<AtomicU32>().as_ref().ok_or(Error::NullPtr) }
     }
-    pub(crate) fn read_data<T>(&mut self) -> Result<T>
-    where
-        T: SharedData,
-    {
+    pub(crate) fn data_len(&mut self) -> Result<usize> {
         let bytes: [u8; 4] = unsafe { self.read_bytes(size_of::<u32>(), LEN_OFFSET)?.try_into()? };
         let len = usize::try_from(u32::from_be_bytes(bytes))?;
         let required_size = HEADER_SIZE.checked_add(len).ok_or(Error::ArithmeticOverflow)?;
@@ -221,6 +219,13 @@ impl Mapping {
             self.start = unsafe { NonNull::new_unchecked(ptr.cast::<u8>()) };
             self.size = required_size;
         }
+        Ok(len)
+    }
+    pub(crate) fn read_data<T>(&mut self) -> Result<T>
+    where
+        T: SharedData,
+    {
+        let len = self.data_len()?;
         let bytes = unsafe { self.read_bytes(len, START_OF_DATA_OFFSET)? };
         T::from_bytes(bytes)
     }

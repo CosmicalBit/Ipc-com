@@ -1,14 +1,13 @@
+use crate::{
+    allocation::{Allocation, ReadOnly, ReadWrite},
+    futex::{Futex, WaitResult},
+    shared_mem::{Error, Mapping, Result},
+};
 use std::{
     borrow::Cow,
     marker::PhantomData,
     sync::atomic::{AtomicU32, Ordering},
     time::{Duration, Instant},
-};
-
-use crate::{
-    allocation::{Allocation, ReadOnly, ReadWrite},
-    futex::{Futex, WaitResult},
-    shared_mem::{Error, Mapping, Result},
 };
 
 ///0 means ulocked any number thats   not 0 is the process holders PID
@@ -29,7 +28,7 @@ pub struct SharedValue<T, Access = ReadOnly>
 where
     T: SharedData,
 {
-    mapping: Mapping,
+    pub(crate) mapping: Mapping,
     _phantom: PhantomData<(Access, T)>,
 }
 
@@ -106,60 +105,6 @@ where
         atomic.store(pid, Ordering::Release);
         Ok(())
     }
-
-    fn lock(atomic: &AtomicU32, watchers: &AtomicU32) -> Result<()> {
-        Self::lock_with_timeout(atomic, watchers, Duration::from_secs(5))
-    }
-
-    fn lock_with_timeout(atomic: &AtomicU32, watchers: &AtomicU32, timeout: Duration) -> Result<()> {
-        // The lock word contains the owning process ID, or zero when unlocked.
-        let pid = u32::try_from(unsafe { libc::getpid() })?;
-        let mut observed_owner = ULOCKED;
-        let mut last_check = Instant::now();
-        loop {
-            let current = atomic.load(Ordering::Acquire);
-
-            if current != ULOCKED {
-                if current != observed_owner {
-                    observed_owner = current;
-                    last_check = Instant::now();
-                }
-                let futex = Futex::new(atomic, watchers);
-
-                match futex.wait_timeout(current, timeout.saturating_sub(last_check.elapsed()))? {
-                    WaitResult::Woken => continue,
-
-                    WaitResult::TimedOut => {
-                        if atomic.load(Ordering::Acquire) == current && !Self::owner_is_alive(current)? && atomic.load(Ordering::Acquire) == current {
-                            return Err(Error::OwnerDied);
-                        }
-                        last_check = Instant::now();
-                        continue;
-                    },
-                }
-            }
-
-            if atomic.compare_exchange(ULOCKED, pid, Ordering::Acquire, Ordering::Relaxed).is_ok() {
-                return Ok(());
-            }
-        }
-    }
-    fn owner_is_alive(pid: u32) -> Result<bool> {
-        let pid = libc::pid_t::try_from(pid)?;
-        if unsafe { libc::kill(pid, 0) } == 0 {
-            return Ok(true);
-        }
-        let error = std::io::Error::last_os_error();
-        match error.raw_os_error() {
-            Some(libc::ESRCH) => Ok(false),
-            Some(libc::EPERM) => Ok(true),
-            _ => Err(Error::Futex(error)),
-        }
-    }
-    fn unlock(atomic: &AtomicU32, watchers: &AtomicU32) -> Result<()> {
-        atomic.store(ULOCKED, Ordering::Release);
-        Futex::new(atomic, watchers).wake_all()
-    }
     /// Reads the current value, growing this handle's mapping if needed.
     pub fn read(&mut self) -> Result<T> {
         {
@@ -178,6 +123,8 @@ where
         Ok(value)
     }
 }
+
+impl<T, Access> LockUlock for SharedValue<T, Access> where T: SharedData {}
 
 impl<T> SharedValue<T, ReadOnly>
 where
@@ -225,6 +172,64 @@ where
         }))
     }
 }
+
+pub(crate) trait LockUlock {
+    fn lock(atomic: &AtomicU32, watchers: &AtomicU32) -> Result<()> {
+        Self::lock_with_timeout(atomic, watchers, Duration::from_secs(5))
+    }
+
+    fn lock_with_timeout(atomic: &AtomicU32, watchers: &AtomicU32, timeout: Duration) -> Result<()> {
+        // The lock word contains the owning process ID, or zero when unlocked.
+        let pid = u32::try_from(unsafe { libc::getpid() })?;
+        let mut observed_owner = ULOCKED;
+        let mut last_check = Instant::now();
+        loop {
+            let current = atomic.load(Ordering::Acquire);
+
+            if current != ULOCKED {
+                if current != observed_owner {
+                    observed_owner = current;
+                    last_check = Instant::now();
+                }
+                let futex = Futex::new(atomic, watchers);
+
+                match futex.wait_timeout(current, timeout.saturating_sub(last_check.elapsed()))? {
+                    WaitResult::Woken => continue,
+
+                    WaitResult::TimedOut => {
+                        if atomic.load(Ordering::Acquire) == current && !Self::owner_is_alive(current)? && atomic.load(Ordering::Acquire) == current {
+                            return Err(Error::OwnerDied);
+                        }
+                        last_check = Instant::now();
+                        continue;
+                    },
+                }
+            }
+
+            if atomic.compare_exchange(ULOCKED, pid, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+                return Ok(());
+            }
+        }
+    }
+    fn unlock(atomic: &AtomicU32, watchers: &AtomicU32) -> Result<()> {
+        atomic.store(ULOCKED, Ordering::Release);
+        Futex::new(atomic, watchers).wake_all()
+    }
+
+    fn owner_is_alive(pid: u32) -> Result<bool> {
+        let pid = libc::pid_t::try_from(pid)?;
+        if unsafe { libc::kill(pid, 0) } == 0 {
+            return Ok(true);
+        }
+        let error = std::io::Error::last_os_error();
+        match error.raw_os_error() {
+            Some(libc::ESRCH) => Ok(false),
+            Some(libc::EPERM) => Ok(true),
+            _ => Err(Error::Futex(error)),
+        }
+    }
+}
+
 // These integration tests require POSIX shared memory, which Miri cannot emulate.
 #[cfg(all(test, not(miri)))]
 mod test {
