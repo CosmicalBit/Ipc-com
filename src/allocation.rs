@@ -1,6 +1,6 @@
+use std::{marker::PhantomData, sync::atomic::AtomicU32};
+
 use crate::shared_mem::{Error, Mapping, Result};
-use std::marker::PhantomData;
-use std::sync::atomic::AtomicU32;
 
 pub struct ReadOnly;
 pub struct ReadWrite;

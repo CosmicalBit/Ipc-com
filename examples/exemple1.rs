@@ -2,8 +2,7 @@
 //!
 //! Run with: `cargo run --example exemple1`
 
-use std::borrow::Cow;
-use std::time::Duration;
+use std::{borrow::Cow, time::Duration};
 
 use ipc_com::{Result, SharedData, SharedMemoryOptions, SharedValue};
 

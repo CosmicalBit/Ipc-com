@@ -1,7 +1,10 @@
-use crate::allocation::{Allocation, ReadOnly, ReadWrite};
-use crate::shared_mem::Result;
-use crate::shared_value::{SharedData, SharedValue};
 use std::marker::PhantomData;
+
+use crate::{
+    allocation::{Allocation, ReadOnly, ReadWrite},
+    shared_mem::Result,
+    shared_value::{SharedData, SharedValue},
+};
 pub struct Missing;
 pub struct Present;
 

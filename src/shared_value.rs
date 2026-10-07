@@ -1,13 +1,14 @@
-use crate::{
-    allocation::{Allocation, ReadOnly, ReadWrite},
-    futex::{Futex, WaitResult},
-    shared_mem::{Error, Mapping, Result},
-};
 use std::{
     borrow::Cow,
     marker::PhantomData,
     sync::atomic::{AtomicU32, Ordering},
     time::{Duration, Instant},
+};
+
+use crate::{
+    allocation::{Allocation, ReadOnly, ReadWrite},
+    futex::{Futex, WaitResult},
+    shared_mem::{Error, Mapping, Result},
 };
 
 ///0 means ulocked any number thats   not 0 is the process holders PID
@@ -227,10 +228,10 @@ where
 // These integration tests require POSIX shared memory, which Miri cannot emulate.
 #[cfg(all(test, not(miri)))]
 mod test {
-    use crate::user_facing::SharedMemoryOptions;
     use std::time::Duration;
 
     use super::*;
+    use crate::user_facing::SharedMemoryOptions;
 
     impl SharedData for String {
         fn as_bytes(&self) -> Result<Cow<'_, [u8]>> {

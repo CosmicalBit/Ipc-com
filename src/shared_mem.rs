@@ -1,17 +1,18 @@
-use libc::{MREMAP_MAYMOVE, close, shm_unlink};
-use std::ffi::CString;
-use std::ffi::NulError;
-use std::mem::MaybeUninit;
-use std::os::raw::c_void;
-use std::ptr;
-use std::ptr::NonNull;
-use std::sync::atomic::AtomicU32;
+use std::{
+    ffi::{CString, NulError},
+    mem::MaybeUninit,
+    os::raw::c_void,
+    ptr,
+    ptr::NonNull,
+    sync::atomic::AtomicU32,
+};
 
-use crate::allocation::GENERATION_OFFSET;
-use crate::allocation::HEADER_SIZE;
-use crate::allocation::LEN_OFFSET;
-use crate::allocation::WATCHERS_OFFSET;
-use crate::shared_value::SharedData;
+use libc::{MREMAP_MAYMOVE, close, shm_unlink};
+
+use crate::{
+    allocation::{GENERATION_OFFSET, HEADER_SIZE, LEN_OFFSET, WATCHERS_OFFSET},
+    shared_value::SharedData,
+};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -287,7 +288,7 @@ impl Mapping {
 }
 impl Drop for Mapping {
     #[inline]
-    fn drop(&mut self) {  
+    fn drop(&mut self) {
         //Safety: This is needed for the safe cleanup plus the pointers arent null here bcs it uses
         //[`NonNull`] type
         unsafe {

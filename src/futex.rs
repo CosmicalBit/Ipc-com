@@ -1,6 +1,9 @@
-use crate::{Error, Result  };
-use std::sync::atomic::{AtomicU32, Ordering, fence};
-use std::time::Duration;
+use std::{
+    sync::atomic::{AtomicU32, Ordering, fence},
+    time::Duration,
+};
+
+use crate::{Error, Result};
 
 pub(crate) struct Futex<'a, 'b> {
     to_watch: &'a AtomicU32,

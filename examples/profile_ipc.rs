@@ -70,7 +70,12 @@ impl ChangeWatcher {
         let generation = unsafe { NonNull::new_unchecked(mapping.as_ptr().cast::<u8>().add(4).cast::<AtomicU32>()) };
         let watchers = unsafe { NonNull::new_unchecked(mapping.as_ptr().cast::<u8>().add(8).cast::<AtomicU32>()) };
         let observed = unsafe { generation.as_ref().load(Ordering::Acquire) };
-        Ok(Self { mapping, generation, watchers, observed })
+        Ok(Self {
+            mapping,
+            generation,
+            watchers,
+            observed,
+        })
     }
 
     fn wait(&mut self) -> io::Result<()> {
