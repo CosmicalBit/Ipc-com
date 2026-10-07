@@ -7,7 +7,10 @@ use std::ptr;
 use std::ptr::NonNull;
 use std::sync::atomic::AtomicU32;
 
+use crate::allocation::GENERATION_OFFSET;
 use crate::allocation::HEADER_SIZE;
+use crate::allocation::LEN_OFFSET;
+use crate::allocation::WATCHERS_OFFSET;
 use crate::shared_value::SharedData;
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -193,18 +196,16 @@ impl Mapping {
         unsafe { self.start.as_ptr().cast::<AtomicU32>().as_ref().ok_or(Error::NullPtr) }
     }
     pub(crate) fn atomic_watchers(&self) -> Result<&AtomicU32> {
-        let offset = size_of::<AtomicU32>().checked_mul(2).ok_or(Error::ArithmeticOverflow)?;
-        unsafe { self.start.add(offset).as_ptr().cast::<AtomicU32>().as_ref().ok_or(Error::NullPtr) }
+        unsafe { self.start.add(WATCHERS_OFFSET).as_ptr().cast::<AtomicU32>().as_ref().ok_or(Error::NullPtr) }
     }
     pub(crate) fn atomic_generation(&self) -> Result<&AtomicU32> {
-        unsafe { self.start.add(size_of::<AtomicU32>()).as_ptr().cast::<AtomicU32>().as_ref().ok_or(Error::NullPtr) }
+        unsafe { self.start.add(GENERATION_OFFSET).as_ptr().cast::<AtomicU32>().as_ref().ok_or(Error::NullPtr) }
     }
     pub(crate) fn read_data<T>(&mut self) -> Result<T>
     where
         T: SharedData,
     {
-        let length_offset = size_of::<AtomicU32>().checked_mul(3).ok_or(Error::ArithmeticOverflow)?;
-        let bytes: [u8; 4] = unsafe { self.read_bytes(size_of::<u32>(), length_offset)?.try_into()? };
+        let bytes: [u8; 4] = unsafe { self.read_bytes(size_of::<u32>(), LEN_OFFSET)?.try_into()? };
         let len = usize::try_from(u32::from_be_bytes(bytes))?;
         let required_size = HEADER_SIZE.checked_add(len).ok_or(Error::ArithmeticOverflow)?;
 
@@ -286,7 +287,7 @@ impl Mapping {
 }
 impl Drop for Mapping {
     #[inline]
-    fn drop(&mut self) {
+    fn drop(&mut self) {  
         //Safety: This is needed for the safe cleanup plus the pointers arent null here bcs it uses
         //[`NonNull`] type
         unsafe {

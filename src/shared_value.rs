@@ -10,6 +10,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+///0 means ulocked any number thats   not 0 is the process holders PID
+pub(crate) const ULOCKED: u32 = 0;
+
 /// This trait is needed implemented for the data that you wish to share over ipc
 ///
 /// Note: if by any chance you type has variable sized fields or its variable size like String or
@@ -78,7 +81,7 @@ where
     pub unsafe fn force_unlock(&self) -> Result<bool> {
         let atomic = self.mapping.atomic_lock()?;
 
-        let unlocked = atomic.compare_exchange(atomic.load(Ordering::Acquire), 0, Ordering::Release, Ordering::Relaxed).is_ok();
+        let unlocked = atomic.compare_exchange(atomic.load(Ordering::Acquire), ULOCKED, Ordering::Release, Ordering::Relaxed).is_ok();
 
         Ok(unlocked)
     }
@@ -110,12 +113,12 @@ where
     fn lock_with_timeout(atomic: &AtomicU32, watchers: &AtomicU32, timeout: Duration) -> Result<()> {
         // The lock word contains the owning process ID, or zero when unlocked.
         let pid = u32::try_from(unsafe { libc::getpid() })?;
-        let mut observed_owner = 0;
+        let mut observed_owner = ULOCKED;
         let mut last_check = Instant::now();
         loop {
             let current = atomic.load(Ordering::Acquire);
 
-            if current != 0 {
+            if current != ULOCKED {
                 if current != observed_owner {
                     observed_owner = current;
                     last_check = Instant::now();
@@ -135,7 +138,7 @@ where
                 }
             }
 
-            if atomic.compare_exchange(0, pid, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+            if atomic.compare_exchange(ULOCKED, pid, Ordering::Acquire, Ordering::Relaxed).is_ok() {
                 return Ok(());
             }
         }
@@ -153,7 +156,7 @@ where
         }
     }
     fn unlock(atomic: &AtomicU32, watchers: &AtomicU32) -> Result<()> {
-        atomic.store(0, Ordering::Release);
+        atomic.store(ULOCKED, Ordering::Release);
         Futex::new(atomic, watchers).wake_all()
     }
     /// Reads the current value, growing this handle's mapping if needed.

@@ -1,4 +1,4 @@
-use crate::{Error, Result};
+use crate::{Error, Result  };
 use std::sync::atomic::{AtomicU32, Ordering, fence};
 use std::time::Duration;
 
@@ -11,6 +11,7 @@ pub(crate) enum WaitResult {
     Woken,
     TimedOut,
 }
+pub(crate) const NO_WATCHERS: u32 = 0;
 
 impl<'a, 'b> Futex<'a, 'b> {
     pub(crate) fn new(to_watch: &'a AtomicU32, watchers: &'b AtomicU32) -> Self {
@@ -37,7 +38,7 @@ impl<'a, 'b> Futex<'a, 'b> {
     pub(crate) fn wake_all(&self) -> Result<()> {
         // Publish the futex value before deciding whether a waiter can sleep.
         fence(Ordering::SeqCst);
-        if self.watchers.load(Ordering::SeqCst) == 0 {
+        if self.watchers.load(Ordering::SeqCst) == NO_WATCHERS {
             return Ok(());
         }
 
