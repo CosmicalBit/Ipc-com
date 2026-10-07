@@ -10,7 +10,7 @@ use std::{
 use libc::{MREMAP_MAYMOVE, close, shm_unlink};
 
 use crate::{
-    allocation::{GENERATION_OFFSET, HEADER_SIZE, LEN_OFFSET, WATCHERS_OFFSET},
+    allocation::{GENERATION_OFFSET, HEADER_SIZE, LEN_OFFSET, START_OF_DATA_OFFSET, WATCHERS_OFFSET},
     shared_value::SharedData,
 };
 
@@ -221,7 +221,7 @@ impl Mapping {
             self.start = unsafe { NonNull::new_unchecked(ptr.cast::<u8>()) };
             self.size = required_size;
         }
-        let bytes = unsafe { self.read_bytes(len, HEADER_SIZE)? };
+        let bytes = unsafe { self.read_bytes(len, START_OF_DATA_OFFSET)? };
         T::from_bytes(bytes)
     }
 
@@ -239,9 +239,8 @@ impl Mapping {
         }
 
         unsafe {
-            let length_offset = size_of::<AtomicU32>().checked_mul(3).ok_or(Error::ArithmeticOverflow)?;
-            self.write_bytes(&new_len.to_be_bytes(), length_offset);
-            self.write_bytes(&bytes, HEADER_SIZE);
+            self.write_bytes(&new_len.to_be_bytes(), LEN_OFFSET);
+            self.write_bytes(&bytes, START_OF_DATA_OFFSET);
         };
 
         Ok(())

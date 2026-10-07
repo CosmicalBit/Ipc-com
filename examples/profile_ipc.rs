@@ -18,6 +18,9 @@ use ipc_com::{ReadWrite, Result as IpcResult, SharedData, SharedMemoryOptions, S
 const SHUTDOWN: u64 = u64::MAX;
 const DEFAULT_PAYLOAD: usize = 64;
 const DEFAULT_ITERATIONS: u64 = 100_000;
+const GENERATION_OFFSET: usize = size_of::<AtomicU32>();
+const WATCHERS_OFFSET: usize = GENERATION_OFFSET + size_of::<AtomicU32>();
+const WATCHER_MAPPING_SIZE: usize = WATCHERS_OFFSET + size_of::<AtomicU32>();
 type WorkResult<T> = Result<T, Box<dyn Error>>;
 
 struct Packet(Vec<u8>);
@@ -60,15 +63,15 @@ impl ChangeWatcher {
         if fd < 0 {
             return Err(io::Error::last_os_error());
         }
-        let mapping = unsafe { libc::mmap(std::ptr::null_mut(), 12, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, fd, 0) };
+        let mapping = unsafe { libc::mmap(std::ptr::null_mut(), WATCHER_MAPPING_SIZE, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, fd, 0) };
         unsafe { libc::close(fd) };
         if mapping == libc::MAP_FAILED {
             return Err(io::Error::last_os_error());
         }
         let mapping = NonNull::new(mapping).expect("mmap returned a non-null address");
         // The header begins with lock, generation, and watcher count.
-        let generation = unsafe { NonNull::new_unchecked(mapping.as_ptr().cast::<u8>().add(4).cast::<AtomicU32>()) };
-        let watchers = unsafe { NonNull::new_unchecked(mapping.as_ptr().cast::<u8>().add(8).cast::<AtomicU32>()) };
+        let generation = unsafe { NonNull::new_unchecked(mapping.as_ptr().cast::<u8>().add(GENERATION_OFFSET).cast::<AtomicU32>()) };
+        let watchers = unsafe { NonNull::new_unchecked(mapping.as_ptr().cast::<u8>().add(WATCHERS_OFFSET).cast::<AtomicU32>()) };
         let observed = unsafe { generation.as_ref().load(Ordering::Acquire) };
         Ok(Self {
             mapping,
@@ -102,7 +105,7 @@ impl ChangeWatcher {
 
 impl Drop for ChangeWatcher {
     fn drop(&mut self) {
-        unsafe { libc::munmap(self.mapping.as_ptr(), 12) };
+        unsafe { libc::munmap(self.mapping.as_ptr(), WATCHER_MAPPING_SIZE) };
     }
 }
 

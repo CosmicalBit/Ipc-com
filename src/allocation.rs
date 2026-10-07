@@ -48,5 +48,10 @@ mod tests {
     fn header_has_three_atomic_words_and_length() {
         assert_eq!(HEADER_SIZE, 4 * size_of::<u32>());
         assert_eq!(align_of::<AtomicU32>(), align_of::<u32>());
+        assert_eq!(GENERATION_OFFSET, LOCK_OFFSET + size_of::<AtomicU32>());
+        assert_eq!(WATCHERS_OFFSET, GENERATION_OFFSET + size_of::<AtomicU32>());
+        assert_eq!(LEN_OFFSET, WATCHERS_OFFSET + size_of::<AtomicU32>());
+        assert_eq!(START_OF_DATA_OFFSET, LEN_OFFSET + size_of::<u32>());
+        assert_eq!(HEADER_SIZE, START_OF_DATA_OFFSET);
     }
 }
