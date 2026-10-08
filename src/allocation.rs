@@ -43,6 +43,7 @@ impl<Access> Allocation<Access> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{SharedData, SharedMemoryOptions};
 
     #[test]
     fn header_has_three_atomic_words_and_length() {
