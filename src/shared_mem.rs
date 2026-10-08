@@ -339,7 +339,7 @@ mod tests {
         assert_eq!(unsafe { stat.assume_init() }.st_size, libc::off_t::try_from(HEADER_SIZE).unwrap());
 
         mapping.remap(HEADER_SIZE + 1).unwrap();
-        unsafe { mapping.write_bytes(&[42], HEADER_SIZE) };
+        unsafe { mapping.write_bytes(&[42], HEADER_SIZE).unwrap() };
         assert_eq!(unsafe { mapping.read_bytes(1, HEADER_SIZE).unwrap() }, &[42]);
     }
 }

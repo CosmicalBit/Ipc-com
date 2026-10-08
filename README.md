@@ -198,6 +198,57 @@ As long as `from_bytes()` knows how to undo what `as_bytes()` did, the crate doe
 
 `Cow<[u8]>` also means a type can borrow an existing byte representation instead of allocating a new buffer when possible.
 
+## Borrowing views
+
+`read()` decodes a new owned value. If decoding can instead return a view into
+the shared bytes, implement `SharedView` and use a read guard. The guard holds
+the shared lock while the view is alive, so the view cannot outlive the guard:
+
+```rust
+use std::borrow::Cow;
+
+use ipc_com::{Result, SharedData, SharedMemoryOptions, SharedValue, SharedView};
+
+struct Bytes(Vec<u8>);
+
+impl SharedData for Bytes {
+    fn as_bytes(&self) -> Result<Cow<'_, [u8]>> {
+        Ok(Cow::Borrowed(&self.0))
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        Ok(Self(bytes.to_vec()))
+    }
+}
+
+impl SharedView for Bytes {
+    type View<'a> = &'a [u8];
+
+    fn view_from_bytes(data: &[u8]) -> Result<Self::View<'_>> {
+        Ok(data)
+    }
+}
+
+fn main() -> Result<()> {
+    let mut owner = SharedMemoryOptions::new()
+        .to_mutable()
+        .name("byte_view")
+        .with_data(Bytes(vec![1, 2, 3]))
+        .create()?;
+    let mut reader = SharedValue::<Bytes>::open("byte_view")?;
+
+    owner.write(&Bytes(vec![4, 5, 6]))?;
+
+    let guard = reader.read_guard()?;
+    let bytes = guard.view()?;
+    assert_eq!(bytes, &[4, 5, 6]);
+    Ok(())
+}
+```
+
+`read_guard()` also updates the reader's mapping if the value has grown. Keep
+the guard in scope while using the view; dropping it releases the lock.
+
 ## What is actually shared
 
 The current shared-memory layout is small:
