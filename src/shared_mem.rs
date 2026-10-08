@@ -28,6 +28,7 @@ pub enum Error {
     IncompatibleHeader,
     DuplicatedName(std::io::Error),
     Futex(std::io::Error),
+    OutOfBounds,
     OwnerDied,
     LockStateError,
 }
@@ -46,6 +47,7 @@ impl std::fmt::Display for Error {
             Self::Futex(error) => write!(f, "futex operation: {error}"),
             Self::OwnerDied => write!(f, "shared memory lock owner died"),
             Self::LockStateError => write!(f, "the lock hit a critical failure"),
+            Self::OutOfBounds => write!(f, "out of bounds read or write occured"),
         }
     }
 }
@@ -73,7 +75,6 @@ pub(crate) struct Mapping {
     owner: bool,
     name: CString,
 }
-//TODO add a show header funciton
 
 impl Mapping {
     pub(crate) fn name(&self) -> &CString {
@@ -141,7 +142,7 @@ impl Mapping {
             return Err(Error::FileDescriptor(std::io::Error::last_os_error()));
         }
 
-        let new_ptr = unsafe { libc::mremap(self.start.as_ptr().cast(), self.size, new_len, MREMAP_MAYMOVE) };
+       let new_ptr = unsafe { libc::mremap(self.start.as_ptr().cast(), self.size, new_len, MREMAP_MAYMOVE) };
 
         if new_ptr == libc::MAP_FAILED {
             let error = std::io::Error::last_os_error();
@@ -162,23 +163,27 @@ impl Mapping {
     /// pointed to a valid place
     /// aligned for `T`
     /// have size_of::<T>() available
-    pub(crate) unsafe fn write_bytes(&self, data: &[u8], offset: usize) -> usize {
+    pub(crate) unsafe fn write_bytes(&self, data: &[u8], offset: usize) -> Result<usize> {
         //check for out of bounds
         let end = offset.checked_add(data.len()).expect("write offset overflowed");
-        assert!(end <= self.size, "write exceeded mapping");
-
+        if end < self.size {
+            return Err(Error::OutOfBounds);
+        }
         let ptr = unsafe { self.start.add(offset).as_ptr() };
 
         //Safety: This two arent even the smae memory (one is mmap and the othre is process normal
         //ram mem) so its safe
         unsafe { ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len()) };
-        end
+        Ok(end)
     }
     //returns the offset where the ptr was left of
     pub(crate) unsafe fn write_concrete_type<T>(&self, data: T, offset: usize) -> Result<usize> {
         //check for out of bounds
         let end = offset.checked_add(size_of::<T>()).ok_or(Error::ArithmeticOverflow)?;
-        assert!(end <= self.size, "write exceeded mapping");
+
+        if end <= self.size {
+            return Err(Error::OutOfBounds);
+        }
 
         let ptr = unsafe { self.start.add(offset).cast::<T>() };
         unsafe { ptr.write(data) }
@@ -188,7 +193,10 @@ impl Mapping {
     pub(crate) unsafe fn read_bytes(&self, ammount: usize, offset: usize) -> Result<&[u8]> {
         //protect the read
         let end = offset.checked_add(ammount).ok_or(Error::ArithmeticOverflow)?;
-        assert!(end <= self.size, "read excedded mapping");
+
+        if end <= self.size {
+            return Err(Error::OutOfBounds);
+        }
 
         let ptr = unsafe { self.start.add(offset).as_ptr() };
         Ok(unsafe { std::slice::from_raw_parts(ptr, ammount) })

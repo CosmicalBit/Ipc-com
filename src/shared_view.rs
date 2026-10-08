@@ -48,7 +48,8 @@ impl<'a, T: SharedView, Access> ReadGuard<'a, T, Access> {
 }
 
 impl<T: SharedView, Access> Drop for ReadGuard<'_, T, Access> {
-    fn drop(&mut self) {
+  #[inline]
+  fn drop(&mut self) {
         // The mapping may have moved while the guard was created.
         let mapping: &Mapping = &self.value.mapping;
         if let (Ok(lock), Ok(watchers)) = (mapping.atomic_lock(), mapping.atomic_watchers()) {
@@ -56,6 +57,7 @@ impl<T: SharedView, Access> Drop for ReadGuard<'_, T, Access> {
         }
     }
 }
+
 #[cfg(all(test, not(miri)))]
 mod tests {
     use std::{borrow::Cow, sync::atomic::Ordering};

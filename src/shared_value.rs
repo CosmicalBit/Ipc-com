@@ -1,13 +1,14 @@
-use crate::{
-    allocation::{Allocation, ReadOnly, ReadWrite},
-    futex::{Futex, WaitResult},
-    shared_mem::{Error, Mapping, Result},
-};
 use std::{
     borrow::Cow,
     marker::PhantomData,
     sync::atomic::{AtomicU32, Ordering},
     time::{Duration, Instant},
+};
+
+use crate::{
+    allocation::{Allocation, ReadOnly, ReadWrite},
+    futex::{Futex, WaitResult},
+    shared_mem::{Error, Mapping, Result},
 };
 
 ///0 means ulocked any number thats   not 0 is the process holders PID
@@ -29,7 +30,7 @@ where
     T: SharedData,
 {
     pub(crate) mapping: Mapping,
-    _phantom: PhantomData<(Access, T)>,
+    phantom: PhantomData<(Access, T)>,
 }
 
 impl<T, Access> From<Allocation<Access>> for SharedValue<T, Access>
@@ -39,7 +40,7 @@ where
     fn from(value: Allocation<Access>) -> Self {
         Self {
             mapping: value.mapping,
-            _phantom: PhantomData,
+            phantom: PhantomData,
         }
     }
 }
@@ -135,12 +136,12 @@ where
         let name = if name.starts_with('/') { name.to_owned() } else { format!("/{name}") };
         let mapping = Mapping::new_connect(&name)?;
 
-        Ok(Self { mapping, _phantom: PhantomData })
+        Ok(Self { mapping, phantom: PhantomData })
     }
     pub fn into_mutable(self) -> SharedValue<T, ReadWrite> {
         SharedValue {
             mapping: self.mapping,
-            _phantom: PhantomData,
+            phantom: PhantomData,
         }
     }
 }
@@ -160,7 +161,7 @@ where
         self.read()
     }
     ///waits  for a change nonblockin for a change nonblocking
-    pub fn wait_for_change_async(&self) -> Result<std::thread::JoinHandle<Result<T>>>
+    pub fn spawn_wait_for_change(&self) -> Result<std::thread::JoinHandle<Result<T>>>
     where
         T: Send + 'static,
     {

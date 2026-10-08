@@ -7,7 +7,7 @@ pub struct ReadWrite;
 
 pub(crate) const HEADER_SIZE: usize = size_of::<AtomicU32>().checked_mul(3).unwrap().checked_add(size_of::<u32>()).unwrap();
 
-/// The lock is used to lock the memory so its thread safe.
+// The lock is used to lock the memory so its thread safe.
 /// The `Generation` is the current Generation that we are on, its used to wake wathers if they exist
 /// The `Watchers` shows the current number of watchers, if is 0 theres no need to awake watchers
 /// bcs theres none
@@ -43,7 +43,7 @@ impl<Access> Allocation<Access> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
+ 
     #[test]
     fn header_has_three_atomic_words_and_length() {
         assert_eq!(HEADER_SIZE, 4 * size_of::<u32>());
