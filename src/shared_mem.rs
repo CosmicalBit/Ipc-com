@@ -142,7 +142,7 @@ impl Mapping {
             return Err(Error::FileDescriptor(std::io::Error::last_os_error()));
         }
 
-       let new_ptr = unsafe { libc::mremap(self.start.as_ptr().cast(), self.size, new_len, MREMAP_MAYMOVE) };
+        let new_ptr = unsafe { libc::mremap(self.start.as_ptr().cast(), self.size, new_len, MREMAP_MAYMOVE) };
 
         if new_ptr == libc::MAP_FAILED {
             let error = std::io::Error::last_os_error();
@@ -252,8 +252,8 @@ impl Mapping {
         }
 
         unsafe {
-            self.write_bytes(&new_len.to_be_bytes(), LEN_OFFSET);
-            self.write_bytes(&bytes, START_OF_DATA_OFFSET);
+            self.write_bytes(&new_len.to_be_bytes(), LEN_OFFSET)?;
+            self.write_bytes(&bytes, START_OF_DATA_OFFSET)?;
         };
 
         Ok(())

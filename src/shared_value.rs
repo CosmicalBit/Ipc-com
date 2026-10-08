@@ -374,7 +374,7 @@ mod test {
         let mut owner = SharedMemoryOptions::new().to_mutable().name(&name).with_data(String::from("before")).create().unwrap();
         let reader = SharedValue::<String>::open(&name).unwrap();
 
-        let waiting = reader.wait_for_change_async().unwrap();
+        let waiting = reader.spawn_wait_for_change().unwrap();
         std::thread::sleep(Duration::from_millis(50));
         owner.write(&String::from("after")).unwrap();
 

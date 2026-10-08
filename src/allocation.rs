@@ -34,8 +34,8 @@ impl<Access> Allocation<Access> {
         unsafe { self.mapping.write_concrete_type(AtomicU32::new(0), LOCK_OFFSET)? };
         unsafe { self.mapping.write_concrete_type(AtomicU32::new(0), GENERATION_OFFSET)? };
         unsafe { self.mapping.write_concrete_type(AtomicU32::new(0), WATCHERS_OFFSET)? };
-        unsafe { self.mapping.write_bytes(&len.to_be_bytes(), LEN_OFFSET) };
-        unsafe { self.mapping.write_bytes(data, START_OF_DATA_OFFSET) };
+        unsafe { self.mapping.write_bytes(&len.to_be_bytes(), LEN_OFFSET)? };
+        unsafe { self.mapping.write_bytes(data, START_OF_DATA_OFFSET)? };
         Ok(())
     }
 }
@@ -43,7 +43,7 @@ impl<Access> Allocation<Access> {
 #[cfg(test)]
 mod tests {
     use super::*;
- 
+
     #[test]
     fn header_has_three_atomic_words_and_length() {
         assert_eq!(HEADER_SIZE, 4 * size_of::<u32>());
