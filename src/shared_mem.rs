@@ -165,8 +165,8 @@ impl Mapping {
     /// have size_of::<T>() available
     pub(crate) unsafe fn write_bytes(&self, data: &[u8], offset: usize) -> Result<usize> {
         //check for out of bounds
-        let end = offset.checked_add(data.len()).expect("write offset overflowed");
-        if end < self.size {
+        let end = offset.checked_add(data.len()).ok_or(Error::ArithmeticOverflow)?;
+        if end > self.size {
             return Err(Error::OutOfBounds);
         }
         let ptr = unsafe { self.start.add(offset).as_ptr() };
@@ -181,7 +181,7 @@ impl Mapping {
         //check for out of bounds
         let end = offset.checked_add(size_of::<T>()).ok_or(Error::ArithmeticOverflow)?;
 
-        if end <= self.size {
+        if end > self.size {
             return Err(Error::OutOfBounds);
         }
 
@@ -194,7 +194,7 @@ impl Mapping {
         //protect the read
         let end = offset.checked_add(ammount).ok_or(Error::ArithmeticOverflow)?;
 
-        if end <= self.size {
+        if end > self.size {
             return Err(Error::OutOfBounds);
         }
 

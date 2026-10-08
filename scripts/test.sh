@@ -43,7 +43,10 @@ asan() {
     return 1
   fi
   echo "AddressSanitizer with randomized layout seed 17 ($target)"
-  RUSTFLAGS='-Zsanitizer=address -Zrandomize-layout -Zlayout-seed=17' \
+  # LeakSanitizer cannot run in ptrace-restricted CI/container environments.
+  # AddressSanitizer remains enabled for bounds and use-after-free checks.
+  ASAN_OPTIONS='detect_leaks=0' \
+    RUSTFLAGS='-Zsanitizer=address -Zrandomize-layout -Zlayout-seed=17' \
     cargo +nightly test -Zbuild-std --target "$target" --all-targets
 }
 
